@@ -1,6 +1,8 @@
 syntax = "proto3";
 service PumpkinDB{
     rpc Greet(GreetRequest) returns (GreetResponse) {}
+    rpc Get(GetRequest) returns (ValueResponse) {}
+    rpc Put(PutRequest) returns (ValueResponse) {}
 }
 
 message GreetRequest{
@@ -10,4 +12,21 @@ message GreetRequest{
 message GreetResponse {
     string status = 1;
     string msg = 2;
+}
+
+message GetRequest{
+    string clientId = 1;
+    uint64 commandId = 2;
+    string key = 3;
+}
+
+message ValueResponse {
+    string value = 1;
+}
+
+message PutRequest {
+    string clientId = 1;
+    uint64 commandId = 2;
+    string key = 3;
+    string value = 4;
 }
