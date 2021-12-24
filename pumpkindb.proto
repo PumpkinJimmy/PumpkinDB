@@ -1,0 +1,13 @@
+syntax = "proto3";
+service PumpkinDB{
+    rpc Greet(GreetRequest) returns (GreetResponse) {}
+}
+
+message GreetRequest{
+    string clientId = 1;
+}
+
+message GreetResponse {
+    string status = 1;
+    string msg = 2;
+}
