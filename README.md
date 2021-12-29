@@ -4,7 +4,10 @@
 
 使用Python语言实现。
 
-Feature (To be finished):
+Feature (finished):
+1. Simple GET-SET console
+
+Feature (to be finished):
 1. 集中式架构
 2. 支持操作：PUT, GET, DEL
 3. 分布式通信：RPC
