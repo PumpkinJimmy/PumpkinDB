@@ -23,6 +23,7 @@ class BinLogger:
         key = key.encode()
         val = val.encode()
         self.logfile.write(struct.pack('iII', self.OP_CREATE, len(key), len(val)) + key + val)
+        self.logfile.flush()
     def logPut(self, key, old_val, new_val):
         key = key.encode()
         old_val = old_val.encode()

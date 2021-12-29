@@ -11,3 +11,7 @@ Feature (To be finished):
 4. 多用户支持
 5. 最终一致性：单调写
 6. 容错与共识：Raft
+
+Dependencies:
+- grpc
+- prompt-toolkit
