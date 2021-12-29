@@ -21,6 +21,7 @@ if __name__ == '__main__':
             commandId=commandId,
             key="x",
         )))
+        
         print("Set x = 2077")
         commandId += 1
         print(stub.Put(pumpkindb_pb2.PutRequest(

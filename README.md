@@ -2,6 +2,8 @@
 
 中山大学分布式系统期末项目：分布式键值数据库。
 
+使用Python语言实现。
+
 Feature (To be finished):
 1. 集中式架构
 2. 支持操作：PUT, GET, DEL
