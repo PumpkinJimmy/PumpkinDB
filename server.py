@@ -1,5 +1,6 @@
 import os
 import struct
+import asyncio
 
 import grpc
 from concurrent import futures
@@ -119,17 +120,25 @@ class PumpkinDBServer(PumpkinDBServicer):
             context.set_details(f'Key not found: {key}')
             raise Exception(f'Key not found: {key}')
         del self.data[key]
-
-if __name__ == '__main__':
-    server = grpc.server(
+async def startServer():
+    server = grpc.aio.server(
         futures.ThreadPoolExecutor(max_workers=5),
         maximum_concurrent_rpcs=5)
     s = PumpkinDBServer()
     add_PumpkinDBServicer_to_server(s, server)
     server.add_insecure_port('localhost:50051')
-    server.start()
+    await server.start()
     print("Server Start")
+    # FIXME: Never exec finally to persist.
     try:
-        server.wait_for_termination()
+        await server.wait_for_termination()
+    except Exception as e:
+        await server.stop(None)
     finally:
         s.write_file()
+
+if __name__ == '__main__':
+    # asyncio.run(startServer())
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(asyncio.wait([startServer()]))
+    loop.close()

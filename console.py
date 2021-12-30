@@ -1,5 +1,6 @@
 import uuid
 import string
+import asyncio
 
 import grpc
 
@@ -25,47 +26,52 @@ def parseToken(line, p):
             p2 += 1
         return line[p:p2], p2
 
+def startClient():
+    channel = grpc.insecure_channel('localhost:50051')
+    stub = PumpkinDBStub(channel)
+    clientId = str(uuid.uuid4())
+    commandId = 0
+    session = PromptSession(HTML('<ansiblue>PumpkinDB=> </ansiblue>'))
+    while 1:
+        line = session.prompt()
+        idx = line.find(' ')
+        if idx < 0: idx = len(line)
+        op = line[:idx]
+        if op.lower() == 'quit':
+            print("Bye")
+            break
+        elif op.lower() == 'get':
+            key, idx = parseToken(line, idx)
+            endpos, _ = parseToken(line, idx)
+            if endpos is not None:
+                print(key, endpos)
+                print(HTML('<ansired>Unknown usage</ansired>'))
+                continue
+            commandId += 1
+            resp = stub.Get(pumpkindb_pb2.GetRequest(
+                clientId=clientId,
+                commandId=commandId,
+                key=key,
+            ))
+            print(f'{key}: {resp.value}')
+        elif op.lower() == 'put':
+            commandId += 1
+            key, idx = parseToken(line, idx)
+            value, idx = parseToken(line, idx)
+            endpos, _ = parseToken(line, idx)
+            if key is None or value is None or endpos is not None:
+                print(HTML('<ansired>Unknown usage</ansired>'))
+                continue
+            resp = stub.Put(pumpkindb_pb2.PutRequest(
+                clientId=clientId,
+                commandId=commandId,
+                key=key,
+                value=value))
+            print(f'{key}: {resp.value}')
+        elif op.lower() == 'del':
+            print(HTML('<ansiyellow>Not implement yet</ansiyellow>'))
+        else:
+            print(HTML(f'<ansired>Unknown command: {op}</ansired>'))
+
 if __name__ == '__main__':
-    with grpc.insecure_channel('localhost:50051') as channel:
-        stub = PumpkinDBStub(channel)
-        clientId = str(uuid.uuid4())
-        commandId = 0
-        session = PromptSession(HTML('<ansiblue>PumpkinDB=> </ansiblue>'))
-        while 1:
-            line = session.prompt()
-            idx = line.find(' ')
-            if idx < 0: idx = len(line)
-            op = line[:idx]
-            if op.lower() == 'quit':
-                print("Bye")
-                break
-            elif op.lower() == 'get':
-                key, idx = parseToken(line, idx)
-                endpos, _ = parseToken(line, idx)
-                if endpos is not None:
-                    print(key, endpos)
-                    print(HTML('<ansired>Unknown usage</ansired>'))
-                    continue
-                commandId += 1
-                resp = stub.Get(pumpkindb_pb2.GetRequest(
-                    clientId=clientId,
-                    commandId=commandId,
-                    key=key,
-                ))
-                print(f'{key}: {resp.value}')
-            elif op.lower() == 'put':
-                commandId += 1
-                key, idx = parseToken(line, idx)
-                value, idx = parseToken(line, idx)
-                endpos, _ = parseToken(line, idx)
-                if key is None or value is None or endpos is not None:
-                    print(HTML('<ansired>Unknown usage</ansired>'))
-                    continue
-                resp = stub.Put(pumpkindb_pb2.PutRequest(
-                    clientId=clientId,
-                    commandId=commandId,
-                    key=key,
-                    value=value))
-                print(f'{key}: {resp.value}')
-            elif op.lower() == 'del':
-                print(HTML('<ansiyellow>Not implement yet</ansiyellow>'))
+    startClient()

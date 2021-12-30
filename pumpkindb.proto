@@ -5,6 +5,11 @@ service PumpkinDB{
     rpc Put(PutRequest) returns (ValueResponse) {}
 }
 
+service Raft{
+    rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
+    rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+}
+
 message GreetRequest{
     string clientId = 1;
 }
@@ -29,4 +34,38 @@ message PutRequest {
     uint64 commandId = 2;
     string key = 3;
     string value = 4;
+}
+
+message RequestVoteRequest{
+    uint32 term = 1;
+    string candidateId = 2;
+    uint64 lastLogIndex = 3;
+    uint32 lastLogTerm = 4;
+}
+
+message RequestVoteResponse {
+    uint32 term = 1;
+    bool voteGranted = 2;
+}
+
+message Entry {
+    string clientId = 1;
+    uint64 commandId = 2;
+    string operation = 3;
+    string value1 = 4;
+    string value2 = 5;
+}
+
+message AppendEntriesRequest {
+    uint32 term = 1;
+    string leaderId = 2;
+    uint64 prevLogIndex = 3;
+    uint32 prevLogTerm = 4;
+    uint64 leaderCommit = 5;
+    repeated Entry entries = 6;
+}
+
+message AppendEntriesResponse {
+    uint32 term = 1;
+    bool success = 2;
 }

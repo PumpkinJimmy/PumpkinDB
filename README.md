@@ -12,7 +12,7 @@ Feature (to be finished):
 2. 支持操作：PUT, GET, DEL
 3. 分布式通信：RPC
 4. 多用户支持
-5. 最终一致性：单调写
+5. 最终一致性：单调写。需要实现客户端的exactly once语义
 6. 容错与共识：Raft
 
 Dependencies:
