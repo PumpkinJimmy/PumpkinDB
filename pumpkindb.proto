@@ -56,6 +56,16 @@ message Entry {
     string value2 = 5;
 }
 
+message LogEntry{
+    uint32 term = 1;
+    uint64 logIndex = 2;
+    Entry command = 3;
+}
+
+message LogEntries{
+    repeated LogEntry entries = 1;
+}
+
 message AppendEntriesRequest {
     uint32 term = 1;
     string leaderId = 2;
