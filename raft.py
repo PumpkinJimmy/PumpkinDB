@@ -11,6 +11,7 @@ import grpc
 from pumpkindb_pb2_grpc import (
     RaftServicer,
     RaftStub,
+    MonitorStub,
     add_RaftServicer_to_server
 )
 from pumpkindb_pb2 import *
@@ -157,16 +158,35 @@ class RaftNode:
         self.election_timer_task = None
         self.heartbeat_timer_task = None
         self.leader_alive_task = None
+
+        # Monitor
+        self.monitor_stub = MonitorStub(grpc.aio.insecure_channel('localhost:5000'))
     
     def getChannel(self, nodeId):
         return grpc.aio.insecure_channel(nodeId)
     
     def isLeader(self):
         return self.nodeId == self.leaderId
+
+    async def sendMonitor(self):
+        await asyncio.sleep(2)
+
+        self.monitor_stub.SendStatus(Status(
+            nodeId = self.nodeId,
+            leaderId = self.leaderId,
+            voteFor = self.votedFor,
+            term = self.term,
+            commitIndex = self.commitIndex,
+            lastApplied = self.lastApplied,
+            lastLogIndex = self.logs[-1].logIndex,
+        ))
+
+        asyncio.create_task(self.sendMonitor())
     
     async def start(self):
         await self.raft_server.start()
         print(f"[RaftNode {self.nodeId}] Server start")
+        asyncio.create_task(self.sendMonitor())
         T = 2
         self.leader_alive_task = asyncio.create_task(
             self.leaderAliveTimer(random.random()*T + T)

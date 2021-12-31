@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2"></script>
+    <style>
+        #app {
+            display: flex;
+            flex-direction: row;
+            justify-content: start;
+            flex-wrap: wrap;
+        }
+        .box {
+            border: 2px solid black;
+            padding: 2%;
+            margin: 20px;
+        }
+        .box td{
+            min-width: 8em;
+        }
+    </style>
+    <script>
+        window.onload = function () {
+            
+            var app = new Vue({
+                el: '#app',
+                data: {
+                    states: {
+                    }
+                },
+            })
+            wsUri = 'ws://localhost:5001'
+            websocket = new WebSocket(wsUri)
+            websocket.onopen = function(evt){
+                alert('open')
+            }
+            websocket.onmessage = function(evt){
+                data = JSON.parse(evt.data)
+                var k = data.nodeId
+                app.$set(app.states, k, data)
+            }
+            websocket.onclose = function(evt){
+                alert('close')
+            }
+            // window.onkeydown = function(evt){
+            //     if (evt.keyCode==32){
+            //         console.log(evt)
+            //         app.$set(app.states, 'c', 3)
+            //     }
+            // }
+        }
+    </script>
+</head>
+
+<body>
+    <div id="app">
+        <div class="box" v-for="(state, nodeId, idx) in states" :key="idx">
+            {{nodeId}}
+            <hr />
+            <table>
+                <tr v-for="(val, key) in state" :key="key">
+                    <td>{{ key }}</td>
+                    <td>{{ val }}</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+
+</body>
+
+</html>
