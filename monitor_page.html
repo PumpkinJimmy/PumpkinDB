@@ -18,6 +18,13 @@
         .box td{
             min-width: 8em;
         }
+        .leader{
+            color: green;
+            font-weight: bold;
+        }
+        .follower{
+            color: green
+        }
     </style>
     <script>
         window.onload = function () {
@@ -55,7 +62,7 @@
 <body>
     <div id="app">
         <div class="box" v-for="(state, nodeId, idx) in states" :key="idx">
-            {{nodeId}}
+            <span :class="nodeId == state.leaderId ? 'leader' : 'follower' ">{{nodeId}}</span>
             <hr />
             <table>
                 <tr v-for="(val, key) in state" :key="key">

@@ -53,6 +53,7 @@ class RaftRPC(RaftServicer):
             self.node.election_timer_task.cancel()
             self.node.election_timer_task = None
         print(f'[{self.node.nodeId}] Heartbeat from {request.leaderId}')
+        self.node.leaderId = request.leaderId
         self.node.leader_alive_task.cancel()
         self.node.leader_alive_task = asyncio.create_task(
             self.node.leaderAliveTimer(2)

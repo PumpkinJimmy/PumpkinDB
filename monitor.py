@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sys
 import functools
 from concurrent.futures import ThreadPoolExecutor
 
@@ -9,9 +10,9 @@ from pumpkindb_pb2 import MonitorResponse
 
 from pumpkindb_pb2_grpc import MonitorServicer, add_MonitorServicer_to_server
 
+monitor_service = None
 class MonitorService(MonitorServicer):
     def __init__(self, conn=None):
-        print(conn)
         self.conn = conn
     def setConn(self, conn):
         self.conn = conn
@@ -31,17 +32,25 @@ class MonitorService(MonitorServicer):
             return MonitorResponse(success=False)
 
 async def websock_main(rpc_server, websocket):
-    print("Web frontend connection found")
-    add_MonitorServicer_to_server(MonitorService(websocket), rpc_server)
-    await asyncio.Future()
+    print(f"Web frontend connection found: {websocket}")
+    monitor_service.setConn(websocket)
+    while True:
+        try:
+            message = await websocket.recv()
+        except websockets.ConnectionClosedOK:
+            monitor_service.setConn(None)
+            break
+        print(message)
     
 
 async def main():
-    
+    global monitor_service
     server = grpc.aio.server(
         ThreadPoolExecutor(40),
         maximum_concurrent_rpcs=5
     )
+    monitor_service = MonitorService()
+    add_MonitorServicer_to_server(monitor_service, server)
     # add_MonitorServicer_to_server(MonitorService(), server)
     server.add_insecure_port('localhost:5000')
     await server.start()
