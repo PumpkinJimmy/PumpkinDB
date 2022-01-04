@@ -31,7 +31,7 @@ class MonitorService(MonitorServicer):
         else:
             return MonitorResponse(success=False)
 
-async def websock_main(rpc_server, websocket):
+async def websock_main(websocket):
     print(f"Web frontend connection found: {websocket}")
     monitor_service.setConn(websocket)
     while True:
@@ -56,8 +56,9 @@ async def main():
     await server.start()
     print("Monitor Start")
     try:
-        bounded_main = functools.partial(websock_main, server)
-        await websockets.serve(bounded_main, 'localhost', 5001)
+        # bounded_main = functools.partial(websock_main, server)
+        # await websockets.serve(bounded_main, 'localhost', 5001)
+        await websockets.serve(websock_main, 'localhost', 5001)
         await server.wait_for_termination()
     except:
         await server.stop(None)

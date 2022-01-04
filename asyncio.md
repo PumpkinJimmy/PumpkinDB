@@ -1,0 +1,14 @@
+## Asyncio 踩坑笔记
+- 有时异步并发不会及时报错，看似正常运行但可能异常早已发生（可能涉及很低级的错误，它都不抛的）
+- 只有Awaitable是最通用的接口，并不是所有Awaitable都是携程、都可以create_task的（比如grpc.aio中的Stub调用AioCall），**不要拿AioCall取create_task，它不是协程，只是Awaitable**
+- `await`隐含两重含义：
+  - **启动协程**
+  - **让权等待**（非阻塞）
+- `await`不含“并发”的语义，它只是非阻塞异步而不是天然并发
+- **各种asyncio的函数都别忘了await**
+- **Asyncio并发的最佳实践**
+  - 协程并发
+    - `create_task + await wait(tasks)` 套一层Task，但可以随时cancel，可以timeout
+    - `await gather(*coros)` 直接并发携程，但没法随心所欲的cancel
+  - 可等待对象：`wait(gather(*coros),timeout)`
+- 不要在非协程函数中调用`create_task`

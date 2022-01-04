@@ -5,6 +5,7 @@ import pickle
 import struct 
 import os
 from concurrent.futures import ThreadPoolExecutor
+from pprint import pprint
 
 import grpc
 
@@ -16,12 +17,23 @@ from pumpkindb_pb2_grpc import (
 )
 from pumpkindb_pb2 import *
 
+async def setTimer(coro_func, timeout):
+    await asyncio.sleep(timeout)
+    await coro_func()
+
+async def setInterval(coro_func, timeout):
+    await asyncio.sleep(timeout)
+    await asyncio.gather(coro_func(), setInterval(coro_func, timeout))
+
+
+def random_timeout(T):
+    return random.random()*T + T
 
 class RaftRPC(RaftServicer):
     def __init__(self, node):
         self.node = node
 
-    def RequestVote(self, request, context):
+    async def RequestVote(self, request, context):
         print(f"[{self.node.nodeId}] Get RequestVote from {request.candidateId}")
         # if self.node.isLeader():
         #     print(f'[{self.node.nodeId}] Reject vote request AS LEADER from {request.candidateId}')
@@ -35,6 +47,12 @@ class RaftRPC(RaftServicer):
                 and request.lastLogIndex >= self.node.logs[-1].logIndex):
             self.node.votedFor = request.candidateId
             print(f'[{self.node.nodeId}] Vote grant {request.candidateId}')
+            if self.node.leader_alive_task:
+                # print(f'[{self.node.nodeId}] cancel leader alive timer')
+                self.node.leader_alive_task.cancel()
+                # print(f'[{self.node.nodeId}] leader alive timer {self.node.leader_alive_task}')
+                self.node.leader_alive_task = None
+                
             return RequestVoteResponse(
                 term=self.node.term,
                 voteGranted=True
@@ -47,17 +65,29 @@ class RaftRPC(RaftServicer):
                 voteGranted=False
             )
     
-    def AppendEntries(self, request, context):
-        if self.node.election_timer_task is not None:
-            print(f'[{self.node.nodeId}] Heartbeat from {request.leaderId}, become follower')
-            self.node.election_timer_task.cancel()
-            self.node.election_timer_task = None
-        print(f'[{self.node.nodeId}] Heartbeat from {request.leaderId}')
-        self.node.leaderId = request.leaderId
-        self.node.leader_alive_task.cancel()
-        self.node.leader_alive_task = asyncio.create_task(
-            self.node.leaderAliveTimer(2)
-        )
+    async def AppendEntries(self, request, context):
+        self.node.leader_alive = True
+
+        if request.term >= self.node.term:
+            if self.node.election_timer_task is not None:
+                print(f'[{self.node.nodeId}] Heartbeat from {request.leaderId}, become follower')
+                self.node.election_timer_task.cancel()
+                self.node.election_timer_task = None
+            print(f'[{self.node.nodeId}] Heartbeat from {request.leaderId}')
+            self.node.term = request.term
+            self.node.leaderId = request.leaderId
+            self.node.votedFor = None
+            if self.node.leader_alive_task is None:
+                print(f'[{self.node.nodeId}] Reset leader alive timer')
+                self.node.leader_alive_task = asyncio.create_task(
+                    self.node.leaderAliveTimer(random_timeout(2))
+                )
+                #print(f'[{self.node.nodeId}] {self.node.leader_alive_task} Reset result')
+
+            if request.leaderCommit > self.node.commitIndex:
+                self.node.commitIndex = min(request.leaderCommit, len(self.node.logs)-1)
+
+        
         return AppendEntriesRequest(
             term=self.node.term,
             success=True
@@ -160,6 +190,9 @@ class RaftNode:
         self.heartbeat_timer_task = None
         self.leader_alive_task = None
 
+        # Convenient state
+        self.leader_alive = False
+
         # Monitor
         self.monitor_stub = MonitorStub(grpc.aio.insecure_channel('localhost:5000'))
     
@@ -172,6 +205,8 @@ class RaftNode:
     async def sendMonitor(self):
         await asyncio.sleep(2)
 
+        # print(f'[Monitor {self.nodeId}] {self.leader_alive_task} ')
+
         self.monitor_stub.SendStatus(Status(
             nodeId = self.nodeId,
             leaderId = self.leaderId,
@@ -182,22 +217,25 @@ class RaftNode:
             lastLogIndex = self.logs[-1].logIndex,
         ))
 
-        asyncio.create_task(self.sendMonitor())
+        await self.sendMonitor()
     
     async def start(self):
         await self.raft_server.start()
         print(f"[RaftNode {self.nodeId}] Server start")
-        asyncio.create_task(self.sendMonitor())
+        tasks = []
+        tasks.append(asyncio.create_task(self.sendMonitor()))
         T = 2
         self.leader_alive_task = asyncio.create_task(
             self.leaderAliveTimer(random.random()*T + T)
         )
+        tasks.append(self.leader_alive_task)
+        tasks.append(asyncio.create_task(self.raft_server.wait_for_termination()))
         # T = 0.5
         # self.election_timer_task = asyncio.create_task(self.electionTimer(random.random()*T+T))
         # if self.isLeader():
         #     self.heartbeat_timer_task = asyncio.create_task(self.heartbeatTimer(0.1))
         try:
-            await self.raft_server.wait_for_termination()
+            await asyncio.wait(tasks)
         except KeyboardInterrupt:
             await self.raft_server.stop(None)
     
@@ -218,23 +256,33 @@ class RaftNode:
             ))
     
     async def leaderAliveTimer(self, timeout):
+        # print(f'[{self.nodeId}] Start leader alive timer')
         await asyncio.sleep(timeout)
-        print(f"[{self.nodeId}] Cannot receive heartbeat, become candidate")
-        T = 0.5
-        self.election_timer_task = asyncio.create_task(self.electionTimer(random.random()*T+T))
+        if self.leader_alive:
+            print(f'[{self.nodeId}] leader alive')
+            self.leader_alive = False
+            await self.leaderAliveTimer(timeout)
+        elif self.votedFor:
+            print(f"[{self.nodeId}] vote granted, cancel leader alive timer")
+            self.leader_alive_task.cancel()
+            self.leader_alive_task = None
+            return
+        else:
+            print(f"[{self.nodeId}] Cannot receive heartbeat, become candidate")
+            T = 2
+            self.election_timer_task = asyncio.create_task(self.electionTimer(random_timeout(T)))
+            self.leader_alive_task = None
     
     async def heartbeatTimer(self, timeout):
         await asyncio.sleep(timeout)
         await self.sendHeartbeat()
         print(f'[{self.nodeId}] send heartbeat')
-        self.heartbeat_timer_task = asyncio.create_task(self.heartbeatTimer(timeout))
-        
-        
-        
+        await self.heartbeatTimer(timeout)
     
     async def electionTimer(self, timeout):
-        await asyncio.sleep(timeout)
-        print(f'[{self.nodeId}]: become candidate')
+        if self.votedFor != None:
+            return
+        print(f'[{self.nodeId}] become candidate')
         self.term += 1
         self.log_file.setTerm(self.term)
         self.votedFor = self.nodeId
@@ -242,6 +290,7 @@ class RaftNode:
         tasks = []
         voteCount = 1
         for channel in self.channels:
+            print(f"[{self.nodeId}] Requesting {channel} for vote")
             stub = RaftStub(channel)
             tasks.append(stub.RequestVote(RequestVoteRequest(
                 term=self.term,
@@ -249,16 +298,20 @@ class RaftNode:
                 lastLogIndex=self.logs[-1].logIndex,
                 lastLogTerm=self.logs[-1].term
             )))
-        for task in tasks:
-            resp = await task
+        # resps = await asyncio.gather(*tasks)
+        resps, _ = await asyncio.wait([asyncio.gather(*tasks)], timeout=2)
+        resps = list(resps)[0].result()
+        for resp in resps:
+            print(resp)
             if resp.voteGranted:
+                print(f'[{self.nodeId}] Get Vote, current vote number: {voteCount}')
                 voteCount += 1
             if resp.term > self.term:
                 self.term = resp.term
                 self.log_file.setTerm(self.term)
             if voteCount > self.nodeNum/2:
                 self.leaderId = self.nodeId
-        
+                break
         self.votedFor = None
         self.log_file.setVoteFor(None)
 
@@ -268,24 +321,143 @@ class RaftNode:
         if self.isLeader:
             await self.sendHeartbeat()
             self.heartbeat_timer_task = asyncio.create_task(self.heartbeatTimer(1))
+            
+            # await self.heartbeat_timer_task
+        
+        else:
+            T = 2
+            self.leader_alive_task = asyncio.create_task(
+                self.leaderAliveTimer(random_timeout(T))
+            )
+            # await self.leader_alive_task
+        
+        self.election_timer_task = None
+    
+    async def crash(self):
+        if self.election_timer_task is not None:
+            self.election_timer_task.cancel()
+            self.election_timer_task = None
+        if self.leader_alive_task is not None:
+            self.leader_alive_task.cancel()
+            self.leader_alive_task = None
+        if self.heartbeat_timer_task is not None:
+            self.heartbeat_timer_task.cancel()
+            self.heartbeat_timer_task = None
+        await self.raft_server.stop(None)
+
+    async def resume(self):
+        # Node & Cluster info.
+        self.leaderId = None
+
+        # Log file
+        self.log_file = RaftFile(f'./{self.nodeId.split(":")[1]}_raft.binlog')
+        
+        # Persistent state
+        self.votedFor = None
+        self.term = 0
+        self.logs = [LogEntry(term = 0, logIndex=0)]
+
+        # Volatile state
+        self.commitIndex = 0
+        self.lastApplied = 0
+
+        # leader only state
+        lastLogIndex = self.logs[-1].logIndex
+        self.nextIndex = [lastLogIndex+1] * (self.nodeNum - 1)
+        self.matchIndex = [0] * (self.nodeNum - 1)
+        
+        # RPC
+        self.channels = list(map(self.getChannel, self.peerIds))
+
+        # Timers
+        self.election_timer_task = None
+        self.heartbeat_timer_task = None
+        self.leader_alive_task = None
+
+        self.leader_alive_task = asyncio.create_task(
+            self.leaderAliveTimer(random_timeout(2))
+        )
+        # T = 0.5
+        # self.election_timer_task = asyncio.create_task(self.electionTimer(random.random()*T+T))
+        # if self.isLeader():
+        #     self.heartbeat_timer_task = asyncio.create_task(self.heartbeatTimer(0.1))
+        try:
+            asyncio.gather(self.leader_alive_task, self.raft_server.wait_for_termination())
+        except KeyboardInterrupt:
+            await self.raft_server.stop(None)
+
+async def randomCrash(ids, nodes, tasks, timeout=5):
+    await asyncio.sleep(timeout)
+    # kill
+    idx = random.randint(0, len(ids)-1)
+    tasks[idx].cancel()
+    # print(f'killing {idx}')
+    asyncio.create_task(nodes[idx].raft_server.stop(None))
+    print(f'[Master] kill {ids[idx]}')
+
+    await asyncio.sleep(timeout)
+    # recover
+    nodeId = ids[idx]
+    peers = ids[:]
+    peers.remove(ids[idx])
+    nodes[idx] = RaftNode(nodeId, peers)
+    tasks[idx] = asyncio.create_task(
+        nodes[idx].start()
+    )
+    print(f'[Master] recover {ids[idx]}')
+
+    asyncio.create_task(randomCrash(ids, nodes, tasks, timeout))
+
+async def leaderCrash(ids, nodes, tasks, timeout=5):
+    await asyncio.sleep(timeout)
+    # kill
+    idx = 0
+    for node in nodes:
+        if node.isLeader():
+            idx = nodes.index(node)
+            break
+
+    await nodes[idx].crash()
+    print(f'[Master] kill {ids[idx]}')
+
+    await asyncio.sleep(timeout)
+    # recover
+
+    await nodes[idx].resume()
+    # nodeId = ids[idx]
+    # peers = ids[:]
+    # peers.remove(ids[idx])
+    # nodes[idx] = RaftNode(nodeId, peers)
+    # tasks[idx] = asyncio.create_task(
+    #     nodes[idx].start()
+    # )
+    print(f'[Master] recover {ids[idx]}')
+
+    asyncio.create_task(leaderCrash(ids, nodes, tasks, timeout))
 
 async def main():
-    ids = ['localhost:9000', 'localhost:9002', 'localhost:9004', 'localhost:9006', 'localhost:9008']
+    # ids = ['localhost:9000', 'localhost:9002', 'localhost:9004', 'localhost:9006', 'localhost:9008']
+    ids = ['localhost:9000', 'localhost:9002', 'localhost:9004']
     nodes = []
     tasks = []
-    for nodeId in ids[:]:
-        ids.remove(nodeId)
-        nodes.append(RaftNode(nodeId, ids))
-        tasks.append(nodes[-1].start())
-        ids.append(nodeId)
+    for nodeId in ids:
+        peers = ids[:]
+        peers.remove(nodeId)
+        nodes.append(RaftNode(nodeId, peers))
+        tasks.append(asyncio.create_task(nodes[-1].start()))
+        peers.append(nodeId)
     
+    tasks.append(asyncio.create_task(leaderCrash(ids, nodes, tasks, timeout=10)))
     await asyncio.wait(tasks)
+    
+    
 
 if __name__ == '__main__':
     if platform.system().lower() == 'windows':
         asyncio.set_event_loop_policy(
             asyncio.WindowsProactorEventLoopPolicy())
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(asyncio.wait([main()]))
-    loop.close()
+    asyncio.run(main())
+    # loop = asyncio.get_event_loop()
+    # loop.run_until_complete(asyncio.wait([main()]))
+    # loop.run_forever()
     # asyncio.run(main())
