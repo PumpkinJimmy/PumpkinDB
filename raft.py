@@ -299,13 +299,18 @@ class RaftNode:
                 lastLogTerm=self.logs[-1].term
             )))
         # resps = await asyncio.gather(*tasks)
-        resps, _ = await asyncio.wait([asyncio.gather(*tasks)], timeout=2)
-        resps = list(resps)[0].result()
+        resps, _ = await asyncio.wait(tasks, timeout=2)
+        # print(f"[{self.nodeId}] FUCK {resps}")
+        
         for resp in resps:
             print(resp)
+            try:
+                resp = resp.result()
+            except:
+                continue
             if resp.voteGranted:
-                print(f'[{self.nodeId}] Get Vote, current vote number: {voteCount}')
                 voteCount += 1
+                print(f'[{self.nodeId}] Get Vote, current vote number: {voteCount}')
             if resp.term > self.term:
                 self.term = resp.term
                 self.log_file.setTerm(self.term)

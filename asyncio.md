@@ -10,5 +10,5 @@
   - 协程并发
     - `create_task + await wait(tasks)` 套一层Task，但可以随时cancel，可以timeout
     - `await gather(*coros)` 直接并发携程，但没法随心所欲的cancel
-  - 可等待对象：`wait(gather(*coros),timeout)`
+  - 可等待对象：`wait(aws,timeout)`，效果其实相当于套娃封装了一下成了Task。**不会报异常，而是返回异常**
 - 不要在非协程函数中调用`create_task`
