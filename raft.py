@@ -457,8 +457,8 @@ async def leaderCrash(ids, nodes, tasks, timeout=5):
 
     await asyncio.sleep(timeout)
     # recover
-
-    await nodes[idx].resume()
+    print(f'[Master] recover {ids[idx]}')
+    await asyncio.gather(leaderCrash(ids, nodes, tasks, timeout), nodes[idx].resume())
     # pprint(nodes[idx].getNodeInfo())
     # nodeId = ids[idx]
     # peers = ids[:]
@@ -467,13 +467,13 @@ async def leaderCrash(ids, nodes, tasks, timeout=5):
     # tasks[idx] = asyncio.create_task(
     #     nodes[idx].start()
     # )
-    print(f'[Master] recover {ids[idx]}')
+    
 
-    asyncio.create_task(leaderCrash(ids, nodes, tasks, timeout))
+    
 
 async def main():
-    # ids = ['localhost:9000', 'localhost:9002', 'localhost:9004', 'localhost:9006', 'localhost:9008']
-    ids = ['localhost:9000', 'localhost:9002', 'localhost:9004']
+    ids = ['localhost:9000', 'localhost:9002', 'localhost:9004', 'localhost:9006', 'localhost:9008']
+    # ids = ['localhost:9000', 'localhost:9002', 'localhost:9004']
     nodes = []
     tasks = []
     for nodeId in ids:
