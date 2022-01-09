@@ -180,6 +180,7 @@ class RaftNode:
         # Convenient state
         self.leader_alive = False
         self.leaderId = None
+        self.running_state = 'stopped'
 
         self.resetTimers()
 
@@ -237,6 +238,7 @@ class RaftNode:
 
     def getNodeInfo(self):
         return {
+            'running_state': self.running_state,
             'nodeId': self.nodeId,
             'peerIds': self.peerIds,
             'votedFor': self.votedFor,
@@ -272,11 +274,12 @@ class RaftNode:
 
         await self.sendMonitor()
     
-    async def start(self):
+    async def _run(self):
         await self.raft_server.start()
         print(f"[RaftNode {self.nodeId}] Server start")
+        self.running_state = 'running'
         tasks = []
-        tasks.append(asyncio.create_task(self.sendMonitor()))
+        
         T = 2
         self.leader_alive_task = asyncio.create_task(
             self.leaderAliveTimer(random.random()*T + T)
@@ -291,6 +294,11 @@ class RaftNode:
             await asyncio.wait(tasks)
         except KeyboardInterrupt:
             await self.raft_server.stop(None)
+
+    async def start(self):
+        asyncio.create_task(self.sendMonitor())
+        await self._run()
+        
     
     async def sendHeartbeat(self):
         
@@ -399,6 +407,7 @@ class RaftNode:
     
     async def crash(self):
         self.resetTimers()
+        self.running_state = 'stopped'
 
         await self.raft_server.stop(None)
         for channel in self.channels:
@@ -409,17 +418,7 @@ class RaftNode:
         self.initRPCServer()
         self.initRPCClient()
 
-        self.leader_alive_task = asyncio.create_task(
-            self.leaderAliveTimer(random_timeout(2))
-        )
-        # T = 0.5
-        # self.election_timer_task = asyncio.create_task(self.electionTimer(random.random()*T+T))
-        # if self.isLeader():
-        #     self.heartbeat_timer_task = asyncio.create_task(self.heartbeatTimer(0.1))
-        try:
-            asyncio.gather(self.leader_alive_task, self.raft_server.wait_for_termination())
-        except KeyboardInterrupt:
-            await self.raft_server.stop(None)
+        await self._run()
 
 async def randomCrash(ids, nodes, tasks, timeout=5):
     await asyncio.sleep(timeout)
