@@ -152,6 +152,13 @@ class RaftFile:
         #     self.log_file.write()
 
 class RaftNode:
+    def __setattr__(self, __name: str, __value) -> None:
+        if __name == 'term':
+            self.log_file.setTerm(__value)
+        elif __name == 'voteFor':
+            self.log_file.setTerm(__value)
+        super().__setattr__(__name, __value)
+    
     def __init__(self, nodeId, peerIds):
         # Node & Cluster info.
         self.leaderId = None
@@ -195,7 +202,7 @@ class RaftNode:
 
         # Monitor
         self.monitor_stub = MonitorStub(grpc.aio.insecure_channel('localhost:5000'))
-    
+
     def getChannel(self, nodeId):
         return grpc.aio.insecure_channel(nodeId)
     
