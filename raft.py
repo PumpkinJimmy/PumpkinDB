@@ -6,6 +6,7 @@ import struct
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pprint import pprint
+import logging
 
 import grpc
 
@@ -161,14 +162,31 @@ class RaftNode:
     
     def __init__(self, nodeId, peerIds):
         # Node & Cluster info.
-        self.leaderId = None
         self.nodeId = nodeId
         self.nodeNum = len(peerIds) + 1
         self.peerIds = peerIds
 
         # Log file
         self.log_file = RaftFile(f'./{self.nodeId.split(":")[1]}_raft.binlog')
-        
+
+        self.initAll()
+
+        self.initRPCClient()
+        self.initRPCServer()
+    
+    def initAll(self):
+        self.initState()
+
+        # Convenient state
+        self.leader_alive = False
+        self.leaderId = None
+
+        self.resetTimers()
+
+        self.initMonitor()
+    
+    def initState(self):
+
         # Persistent state
         self.votedFor = None
         self.term = 0
@@ -182,25 +200,33 @@ class RaftNode:
         lastLogIndex = self.logs[-1].logIndex
         self.nextIndex = [lastLogIndex+1] * (self.nodeNum - 1)
         self.matchIndex = [0] * (self.nodeNum - 1)
-        
-        # RPC
-        self.channels = list(map(self.getChannel, self.peerIds))
+    
+    def initRPCServer(self):
         self.raft_server = grpc.aio.server(
             ThreadPoolExecutor(max_workers=40),
             maximum_concurrent_rpcs=40
         )
         add_RaftServicer_to_server(RaftRPC(self), self.raft_server)
-        self.raft_server.add_insecure_port(nodeId)
-
-        # Timers
+        self.raft_server.add_insecure_port(self.nodeId)
+    
+    def initRPCClient(self):
+        self.channels = list(map(self.getChannel, self.peerIds))
+    
+    def resetTimers(self):
+        tmp = getattr(self, 'election_timer_task', None)
+        if tmp:
+            tmp.cancel()
+        tmp = getattr(self, 'heartbeat_timer_task', None)
+        if tmp:
+            tmp.cancel()
+        tmp = getattr(self, 'leader_alive_task', None)
+        if tmp:
+            tmp.cancel()
         self.election_timer_task = None
         self.heartbeat_timer_task = None
         self.leader_alive_task = None
-
-        # Convenient state
-        self.leader_alive = False
-
-        # Monitor
+    
+    def initMonitor(self):
         self.monitor_stub = MonitorStub(grpc.aio.insecure_channel('localhost:5000'))
 
     def getChannel(self, nodeId):
@@ -208,6 +234,26 @@ class RaftNode:
     
     def isLeader(self):
         return self.nodeId == self.leaderId
+
+    def getNodeInfo(self):
+        return {
+            'nodeId': self.nodeId,
+            'peerIds': self.peerIds,
+            'votedFor': self.votedFor,
+            'term': self.term,
+            'logs': self.logs,
+            'commitIndex': self.commitIndex,
+            'lastApplied': self.lastApplied,
+            'nextIndex': self.nextIndex,
+            'matchIndex': self.matchIndex,
+            'channels': self.channels,
+            'server': self.raft_server,
+            'leader_alive': self.leader_alive,
+            'leaderId': self.leaderId,
+            'leader_alive_timer': self.leader_alive_task,
+            'election_timer': self.election_timer_task,
+            'heartbeat_timer': self.heartbeat_timer_task
+        }
 
     async def sendMonitor(self):
         await asyncio.sleep(2)
@@ -250,6 +296,7 @@ class RaftNode:
         
         tasks = []
         for channel in self.channels:
+            # print(channel.get_state())
             stub = RaftStub(channel)
             tasks.append(stub.AppendEntries(
                 AppendEntriesRequest(
@@ -259,7 +306,8 @@ class RaftNode:
                     prevLogTerm = self.logs[-1].term,
                     leaderCommit = self.commitIndex,
                     entries = ()
-                )
+                ),
+                timeout=1.5
             ))
     
     async def leaderAliveTimer(self, timeout):
@@ -304,16 +352,16 @@ class RaftNode:
                 candidateId=self.nodeId,
                 lastLogIndex=self.logs[-1].logIndex,
                 lastLogTerm=self.logs[-1].term
-            )))
-        # resps = await asyncio.gather(*tasks)
+            ), timeout=1.5))
+
         resps, _ = await asyncio.wait(tasks, timeout=2)
-        # print(f"[{self.nodeId}] FUCK {resps}")
         
         for resp in resps:
             print(resp)
             try:
                 resp = resp.result()
-            except:
+            except Exception as e:
+                print(e)
                 continue
             if resp.voteGranted:
                 voteCount += 1
@@ -330,13 +378,17 @@ class RaftNode:
         print(f'[{self.nodeId}] Current Term: {self.term}, Leader: {self.leaderId}')
         print(f'[{self.nodeId}] isLeader: { self.isLeader()}')
 
-        if self.isLeader:
+        # pprint(self.getNodeInfo())
+
+        if self.isLeader():
+            # print(f"[{self.nodeId}] FUCK")
             await self.sendHeartbeat()
             self.heartbeat_timer_task = asyncio.create_task(self.heartbeatTimer(1))
             
             # await self.heartbeat_timer_task
         
         else:
+            # print(f"[{self.nodeId}] OK")
             T = 2
             self.leader_alive_task = asyncio.create_task(
                 self.leaderAliveTimer(random_timeout(T))
@@ -346,45 +398,16 @@ class RaftNode:
         self.election_timer_task = None
     
     async def crash(self):
-        if self.election_timer_task is not None:
-            self.election_timer_task.cancel()
-            self.election_timer_task = None
-        if self.leader_alive_task is not None:
-            self.leader_alive_task.cancel()
-            self.leader_alive_task = None
-        if self.heartbeat_timer_task is not None:
-            self.heartbeat_timer_task.cancel()
-            self.heartbeat_timer_task = None
+        self.resetTimers()
+
         await self.raft_server.stop(None)
+        for channel in self.channels:
+            await channel.close()
 
     async def resume(self):
-        # Node & Cluster info.
-        self.leaderId = None
-
-        # Log file
-        self.log_file = RaftFile(f'./{self.nodeId.split(":")[1]}_raft.binlog')
-        
-        # Persistent state
-        self.votedFor = None
-        self.term = 0
-        self.logs = [LogEntry(term = 0, logIndex=0)]
-
-        # Volatile state
-        self.commitIndex = 0
-        self.lastApplied = 0
-
-        # leader only state
-        lastLogIndex = self.logs[-1].logIndex
-        self.nextIndex = [lastLogIndex+1] * (self.nodeNum - 1)
-        self.matchIndex = [0] * (self.nodeNum - 1)
-        
-        # RPC
-        self.channels = list(map(self.getChannel, self.peerIds))
-
-        # Timers
-        self.election_timer_task = None
-        self.heartbeat_timer_task = None
-        self.leader_alive_task = None
+        self.initAll()
+        self.initRPCServer()
+        self.initRPCClient()
 
         self.leader_alive_task = asyncio.create_task(
             self.leaderAliveTimer(random_timeout(2))
@@ -429,6 +452,7 @@ async def leaderCrash(ids, nodes, tasks, timeout=5):
             idx = nodes.index(node)
             break
 
+    # pprint(nodes[idx].getNodeInfo())
     await nodes[idx].crash()
     print(f'[Master] kill {ids[idx]}')
 
@@ -436,6 +460,7 @@ async def leaderCrash(ids, nodes, tasks, timeout=5):
     # recover
 
     await nodes[idx].resume()
+    # pprint(nodes[idx].getNodeInfo())
     # nodeId = ids[idx]
     # peers = ids[:]
     # peers.remove(ids[idx])
@@ -457,8 +482,7 @@ async def main():
         peers.remove(nodeId)
         nodes.append(RaftNode(nodeId, peers))
         tasks.append(asyncio.create_task(nodes[-1].start()))
-        peers.append(nodeId)
-    
+
     tasks.append(asyncio.create_task(leaderCrash(ids, nodes, tasks, timeout=10)))
     await asyncio.wait(tasks)
     
@@ -469,7 +493,3 @@ if __name__ == '__main__':
         asyncio.set_event_loop_policy(
             asyncio.WindowsProactorEventLoopPolicy())
     asyncio.run(main())
-    # loop = asyncio.get_event_loop()
-    # loop.run_until_complete(asyncio.wait([main()]))
-    # loop.run_forever()
-    # asyncio.run(main())
