@@ -8,6 +8,8 @@ import string
 from concurrent.futures import ThreadPoolExecutor
 from pprint import pprint
 import logging
+from typing import List
+import copy
 
 import grpc
 
@@ -92,6 +94,7 @@ class RaftRPC(RaftServicer):
                     logIndex=self.node.logs[-1].logIndex+1,
                     command = entry
                     )
+                self.node.log_file.appendEntries([log_entry])
                 self.node.logs.append(log_entry)
                 # apply
                 self.node.data[entry.key] = entry.value2
@@ -121,29 +124,43 @@ class RaftFile:
     '''
     def __init__(self, log_path):
         self.log_path = log_path
-        self.log_file = open(self.log_path, 'ab+')
-        self.state_file = open(self.log_path, 'rb+')
-        # print(log_path)
         if not os.path.exists(self.log_path):
+            self.log_file = open(self.log_path, 'ab+')
+            self.state_file = open(self.log_path, 'rb+')
             self.log_file.write(struct.pack('I', 0))
-            self.log_file.write(b'\0' * 512)
+            self.log_file.write(bytes([0] * 512))
             self.log_file.flush()
             self.state_file.seek(0)
+        else:
+            self.log_file = open(self.log_path, 'ab+')
+            self.state_file = open(self.log_path, 'rb+')
+        # print(log_path)
+        
     
     def getTerm(self):
-        res = struct.unpack('I', self.state_file.read(4))
+        res = struct.unpack('I', self.state_file.read(4))[0]
         self.state_file.seek(0)
         return res
     
     def getVoteFor(self):
         self.state_file.seek(4)
-        len_id = struct.unpack('I', self.state_file.read(4))
+        len_id = struct.unpack('I', self.state_file.read(4))[0]
         res = self.state_file.read(len_id)
         self.state_file.seek(0)
         return res
     
-    def getLogs(self):
-        raise NotImplemented()
+    def readLogs(self):
+        logs = []
+        self.log_file.seek(4+512)
+        len_data = self.log_file.read(4)
+        while len_data:
+            len_ = struct.unpack('i', len_data)[0]
+            entry = LogEntry()
+            entry.ParseFromString(self.log_file.read(len_))
+            logs.append(copy.copy(entry))
+            len_data = self.log_file.read(4)
+        return logs
+
     
     def setTerm(self, term):
         self.state_file.write(struct.pack('I', term))
@@ -165,8 +182,12 @@ class RaftFile:
         self.state_file.flush()
         self.state_file.seek(0)
 
-    def appendEntries(self, entries):
-        pass
+    def appendEntries(self, entries: List[LogEntry]):
+        for lentry in entries:
+            data = lentry.SerializeToString()
+            record = struct.pack('i', len(data)) + data
+            self.log_file.write(record)
+            self.log_file.flush()
         # for lentry in entries:
         #     self.log_file.write()
 
@@ -187,6 +208,7 @@ class RaftNode:
 
         # Log file
         self.log_file = RaftFile(f'./{self.nodeId.split(":")[1]}_raft.binlog')
+        self.logger.debug(self.log_file.readLogs())
 
         # In-memory DB
         self.data = {}
