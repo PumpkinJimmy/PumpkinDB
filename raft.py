@@ -73,7 +73,7 @@ class RaftRPC(RaftServicer):
             self.node.leaderId = request.leaderId
             self.node.votedFor = None
             if self.node.leader_alive_task is None:
-                self.logger.debug(f'Reset leader alive timer')
+                self.logger.debug('Reset leader alive timer')
                 self.node.leader_alive_task = asyncio.create_task(
                     self.node.leaderAliveTimer(random_timeout(2))
                 )
@@ -175,7 +175,7 @@ class RaftNode:
         h.setFormatter(f)
         h.setLevel(logging.DEBUG)
         self.logger.addHandler(h)
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.INFO)
     
     def initAll(self):
         self.initState()
@@ -431,6 +431,8 @@ async def randomCrash(ids, nodes, tasks, timeout=5):
 
 async def leaderCrash(ids, nodes, tasks, timeout=5):
     await asyncio.sleep(timeout)
+    logger = logging.getLogger('Monitor')
+
     # kill
     idx = 0
     for node in nodes:
@@ -439,17 +441,26 @@ async def leaderCrash(ids, nodes, tasks, timeout=5):
             break
 
     await nodes[idx].crash()
-    print(f'[Master] kill {ids[idx]}')
+    logger.info(f'kill {ids[idx]}')
 
     await asyncio.sleep(timeout)
     # recover
-    print(f'[Master] recover {ids[idx]}')
+    logger.info(f'recover {ids[idx]}')
     await asyncio.gather(leaderCrash(ids, nodes, tasks, timeout), nodes[idx].resume())
     
 
     
 
 async def main():
+    # set Monitor logger
+    logger = logging.getLogger('Monitor')
+    f = logging.Formatter('[%(name)s] %(msg)s')
+    h = logging.StreamHandler()
+    h.setFormatter(f)
+    h.setLevel(logging.DEBUG)
+    logger.addHandler(h)
+    logger.setLevel(logging.INFO)
+
     ids = ['localhost:9000', 'localhost:9002', 'localhost:9004', 'localhost:9006', 'localhost:9008']
     # ids = ['localhost:9000', 'localhost:9002', 'localhost:9004']
     nodes = []
