@@ -4,6 +4,7 @@ import random
 import pickle
 import struct 
 import os
+import string
 from concurrent.futures import ThreadPoolExecutor
 from pprint import pprint
 import logging
@@ -66,27 +67,50 @@ class RaftRPC(RaftServicer):
 
         if request.term >= self.node.term:
             if self.node.election_timer_task is not None:
+                # switch to follower
                 self.logger.info(f'Become follower: heartbeat from {request.leaderId}')
                 self.node.election_timer_task.cancel()
                 self.node.election_timer_task = None
+            
             self.logger.debug(f'Heartbeat from {request.leaderId}')
             self.node.term = request.term
             self.node.leaderId = request.leaderId
             self.node.votedFor = None
+
+            # reset leader alive timer
             if self.node.leader_alive_task is None:
                 self.logger.debug('Reset leader alive timer')
                 self.node.leader_alive_task = asyncio.create_task(
                     self.node.leaderAliveTimer(random_timeout(2))
                 )
             
+            # add logs
+            for entry in request.entries:
+                # write log
+                log_entry = LogEntry(
+                    term=self.node.term,
+                    logIndex=self.node.logs[-1].logIndex+1,
+                    command = entry
+                    )
+                self.node.logs.append(log_entry)
+                # apply
+                self.node.data[entry.key] = entry.value2
+
             if request.leaderCommit > self.node.commitIndex:
                 self.node.commitIndex = min(request.leaderCommit, len(self.node.logs)-1)
+            self.logger.debug(f'Current data table: {self.node.data}')
+            return AppendEntriesResponse(
+                term=self.node.term,
+                success=True
+            )
+        # Reject msg from old term
+        else:
+            return AppendEntriesResponse(
+                term=self.node.term,
+                success=False
+            )
 
         
-        return AppendEntriesResponse(
-            term=self.node.term,
-            success=True
-        )
 
 class RaftFile:
     '''
@@ -163,6 +187,9 @@ class RaftNode:
 
         # Log file
         self.log_file = RaftFile(f'./{self.nodeId.split(":")[1]}_raft.binlog')
+
+        # In-memory DB
+        self.data = {}
 
         self.initAll()
 
@@ -300,15 +327,16 @@ class RaftNode:
     
     async def sendHeartbeat(self):
         tasks = []
+        entry = Entry(
+            clientId='test',
+            commandId=5,
+            operation='TEST',
+            key=str(random.choice(list(string.ascii_letters))),
+            value1=str(random.randint(1, 100)),
+            value2=str(random.randint(1,100)),
+        )
         for channel in self.channels:
             stub = RaftStub(channel)
-            entry = Entry(
-                clientId='test',
-                commandId=5,
-                operation='TEST',
-                value1='hey',
-                value2='gay!'
-            )
             tasks.append(stub.AppendEntries(
                 AppendEntriesRequest(
                     term = self.term,

@@ -56,8 +56,9 @@ message Entry {
     string clientId = 1;
     uint64 commandId = 2;
     string operation = 3;
-    string value1 = 4;
-    string value2 = 5;
+    string key = 4;
+    string value1 = 5;
+    string value2 = 6;
 }
 
 message LogEntry{
