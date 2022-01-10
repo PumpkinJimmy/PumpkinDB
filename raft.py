@@ -62,10 +62,11 @@ class RaftRPC(RaftServicer):
     
     async def AppendEntries(self, request, context):
         self.node.leader_alive = True
+        self.logger.debug(f'Entries: {request.entries}')
 
         if request.term >= self.node.term:
             if self.node.election_timer_task is not None:
-                self.logger.debug(f'Heartbeat from {request.leaderId}, become follower')
+                self.logger.info(f'Become follower: heartbeat from {request.leaderId}')
                 self.node.election_timer_task.cancel()
                 self.node.election_timer_task = None
             self.logger.debug(f'Heartbeat from {request.leaderId}')
@@ -77,12 +78,12 @@ class RaftRPC(RaftServicer):
                 self.node.leader_alive_task = asyncio.create_task(
                     self.node.leaderAliveTimer(random_timeout(2))
                 )
-
+            
             if request.leaderCommit > self.node.commitIndex:
                 self.node.commitIndex = min(request.leaderCommit, len(self.node.logs)-1)
 
         
-        return AppendEntriesRequest(
+        return AppendEntriesResponse(
             term=self.node.term,
             success=True
         )
@@ -175,7 +176,7 @@ class RaftNode:
         h.setFormatter(f)
         h.setLevel(logging.DEBUG)
         self.logger.addHandler(h)
-        self.logger.setLevel(logging.INFO)
+        self.logger.setLevel(logging.DEBUG)
     
     def initAll(self):
         self.initState()
@@ -301,6 +302,13 @@ class RaftNode:
         tasks = []
         for channel in self.channels:
             stub = RaftStub(channel)
+            entry = Entry(
+                clientId='test',
+                commandId=5,
+                operation='TEST',
+                value1='hey',
+                value2='gay!'
+            )
             tasks.append(stub.AppendEntries(
                 AppendEntriesRequest(
                     term = self.term,
@@ -308,10 +316,14 @@ class RaftNode:
                     prevLogIndex = self.logs[-1].logIndex,
                     prevLogTerm = self.logs[-1].term,
                     leaderCommit = self.commitIndex,
-                    entries = ()
+                    entries = (
+                        entry,
+                    )
                 ),
                 timeout=1.5
             ))
+        
+        await asyncio.wait(tasks)
     
     async def leaderAliveTimer(self, timeout):
         await asyncio.sleep(timeout)
@@ -325,7 +337,7 @@ class RaftNode:
             self.leader_alive_task = None
             return
         else:
-            self.logger.debug("Cannot receive heartbeat, become candidate")
+            self.logger.info("Become candidate: cannot receive heartbeat")
             T = 2
             self.election_timer_task = asyncio.create_task(self.electionTimer(random_timeout(T)))
             self.leader_alive_task = None
@@ -376,8 +388,8 @@ class RaftNode:
         self.votedFor = None
         self.log_file.setVoteFor(None)
 
-        self.logger.info(f'Current Term: {self.term}, Leader: {self.leaderId}')
-        self.logger.info(f'isLeader: { self.isLeader()}')
+        self.logger.info(f'Become leader. Get vote number: {voteCount}. Current Term: {self.term}')
+        self.logger.debug(f'isLeader: { self.isLeader()}')
 
 
         if self.isLeader():
