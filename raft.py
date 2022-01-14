@@ -91,11 +91,11 @@ class RaftRPC(RaftServicer):
                 # write log
                 log_entry = LogEntry(
                     term=self.node.term,
-                    logIndex=self.node.logs[-1].logIndex+1,
+                    logIndex=len(self.node.logs),
                     command = entry
                     )
-                self.node.log_file.appendEntries([log_entry])
-                self.node.logs.append(log_entry)
+                self.node.appendLog([log_entry])
+                # self.node.logs.append(log_entry)
                 # apply
                 self.node.data[entry.key] = entry.value2
 
@@ -188,27 +188,124 @@ class RaftFile:
             record = struct.pack('i', len(data)) + data
             self.log_file.write(record)
             self.log_file.flush()
-        # for lentry in entries:
-        #     self.log_file.write()
 
-class RaftNode:
-    def __setattr__(self, __name: str, __value) -> None:
-        if __name == 'term':
-            self.log_file.setTerm(__value)
-        elif __name == 'voteFor':
-            self.log_file.setTerm(__value)
-        super().__setattr__(__name, __value)
+class RaftPersistentStateMachine:
+    # log index start from 1 (not 0)
+    def __init__(self, log_path):
+        self.log_path = log_path
+        self._term = 0
+        self._votedFor = None
+        self.logs = []
+        if not os.path.exists(self.log_path):
+            self.log_file = open(self.log_path, 'ab+')
+            self.state_file = open(self.log_path, 'rb+')
+            self.log_file.write(struct.pack('I', 0))
+            self.log_file.write(bytes([0] * 512))
+            self.log_file.flush()
+            self.state_file.seek(0)
+            self.setTerm(0)
+            self.setVotedFor(None)
+            self.logs = [LogEntry(
+                    term=0,
+                    logIndex=0
+                )]
+        else:
+            self.log_file = open(self.log_path, 'ab+')
+            self.state_file = open(self.log_path, 'rb+')
+            self.readTerm()
+            self.readVoteFor()
+            self.readLogs()
+
+    def getLastLogIdx(self):
+        return self.logs[-1].logIndex
+
+    def getLastLogTerm(self):
+        return self.logs[-1].term
+
+    def appendLog(self, entries: List[LogEntry]):
+        self.logs.extend(entries)
+    
+    def getTerm(self):
+        return self._term
+    
+    def setTerm(self, term):
+        self.state_file.write(struct.pack('I', term))
+        self.state_file.flush()
+        self.state_file.seek(0)
+        self._term = term
+
+    def getVotedFor(self):
+        return self._votedFor
+
+    def setVotedFor(self, votedFor):
+        self.state_file.seek(4)
+        if votedFor is None:
+            self.state_file.write(struct.pack('I', 0))
+            self.state_file.flush()
+            self.state_file.seek(0)
+            self._votedFor = votedFor
+        else:
+            voteFor = votedFor.encode()
+            len_id = len(voteFor)
+            self.state_file.write(struct.pack('I', len_id))
+            self.state_file.write(voteFor)
+            self.state_file.flush()
+            self.state_file.seek(0)
+            self._votedFor = votedFor
+    
+    def readTerm(self):
+        res = struct.unpack('I', self.state_file.read(4))[0]
+        self.state_file.seek(0)
+        self.setTerm(res)
+
+    def readVoteFor(self):
+        self.state_file.seek(4)
+        len_id = struct.unpack('I', self.state_file.read(4))[0]
+        res = self.state_file.read(len_id)
+        self.state_file.seek(0)
+        if not len_id: self.setVotedFor(None)
+        else:
+            self.setVotedFor(res.decode())
+
+    def readLogs(self):
+        logs = [LogEntry(
+            term=0,
+            logIndex=0
+        )]
+        self.log_file.seek(4+512)
+        len_data = self.log_file.read(4)
+        while len_data:
+            len_ = struct.unpack('i', len_data)[0]
+            entry = LogEntry()
+            entry.ParseFromString(self.log_file.read(len_))
+            logs.append(copy.copy(entry))
+            len_data = self.log_file.read(4)
+        self.logs = logs
+    
+    votedFor = property(getVotedFor, setVotedFor)
+    term = property(getTerm, setTerm)
+
+class RaftNode(RaftPersistentStateMachine):
+    # def __setattr__(self, __name: str, __value) -> None:
+        # if __name == 'term':
+        #     self.log_file.setTerm(__value)
+        # elif __name == 'voteFor':
+        #     self.log_file.setTerm(__value)
+        # super().__setattr__(__name, __value)
     
     def __init__(self, nodeId, peerIds):
+        
         # Node & Cluster info.
         self.nodeId = nodeId
         self.nodeNum = len(peerIds) + 1
         self.peerIds = peerIds
         self.initLogger()
 
+        super().__init__(f'./{self.nodeId.split(":")[1]}_raft.binlog')
+
         # Log file
-        self.log_file = RaftFile(f'./{self.nodeId.split(":")[1]}_raft.binlog')
-        self.logger.debug(self.log_file.readLogs())
+        # self.log_file = RaftFile(f'./{self.nodeId.split(":")[1]}_raft.binlog')
+        # self.logger.debug(self.log_file.readLogs())
 
         # In-memory DB
         self.data = {}
@@ -238,20 +335,21 @@ class RaftNode:
         self.resetTimers()
 
         self.initMonitor()
-    
+
+
     def initState(self):
 
-        # Persistent state
-        self.votedFor = None
-        self.term = 0
-        self.logs = [LogEntry(term = 0, logIndex=0)]
+        # # Persistent state
+        # self.votedFor = None
+        # self.term = 0
+        # self.logs = [LogEntry(term = 0, logIndex=0)]
 
         # Volatile state
         self.commitIndex = 0
         self.lastApplied = 0
 
         # leader only state
-        lastLogIndex = self.logs[-1].logIndex
+        lastLogIndex = self.getLastLogIdx()
         self.nextIndex = [lastLogIndex+1] * (self.nodeNum - 1)
         self.matchIndex = [0] * (self.nodeNum - 1)
     
@@ -320,7 +418,7 @@ class RaftNode:
             term = self.term,
             commitIndex = self.commitIndex,
             lastApplied = self.lastApplied,
-            lastLogIndex = self.logs[-1].logIndex,
+            lastLogIndex = self.getLastLogIdx(),
         ))
 
         await self.sendMonitor()
@@ -348,32 +446,33 @@ class RaftNode:
         await self._run()
     
     async def sendHeartbeat(self):
-        tasks = []
-        entry = Entry(
-            clientId='test',
-            commandId=5,
-            operation='TEST',
-            key=str(random.choice(list(string.ascii_letters))),
-            value1=str(random.randint(1, 100)),
-            value2=str(random.randint(1,100)),
-        )
-        for channel in self.channels:
-            stub = RaftStub(channel)
-            tasks.append(stub.AppendEntries(
-                AppendEntriesRequest(
-                    term = self.term,
-                    leaderId = self.leaderId,
-                    prevLogIndex = self.logs[-1].logIndex,
-                    prevLogTerm = self.logs[-1].term,
-                    leaderCommit = self.commitIndex,
-                    entries = (
-                        entry,
-                    )
-                ),
-                timeout=1.5
-            ))
+        await self.sendRandomMsg()
+        # tasks = []
+        # entry = Entry(
+        #     clientId='test',
+        #     commandId=5,
+        #     operation='TEST',
+        #     key=str(random.choice(list(string.ascii_letters))),
+        #     value1=str(random.randint(1, 100)),
+        #     value2=str(random.randint(1,100)),
+        # )
+        # for channel in self.channels:
+        #     stub = RaftStub(channel)
+        #     tasks.append(stub.AppendEntries(
+        #         AppendEntriesRequest(
+        #             term = self.term,
+        #             leaderId = self.leaderId,
+        #             prevLogIndex = self.logs[-1].logIndex,
+        #             prevLogTerm = self.logs[-1].term,
+        #             leaderCommit = self.commitIndex,
+        #             entries = (
+        #                 entry,
+        #             )
+        #         ),
+        #         timeout=1.5
+        #     ))
         
-        await asyncio.wait(tasks)
+        # await asyncio.wait(tasks)
     
     async def leaderAliveTimer(self, timeout):
         await asyncio.sleep(timeout)
@@ -382,6 +481,7 @@ class RaftNode:
             self.leader_alive = False
             await self.leaderAliveTimer(timeout)
         elif self.votedFor:
+            print(self.votedFor)
             self.logger.debug("Vote granted, cancel leader alive timer")
             self.leader_alive_task.cancel()
             self.leader_alive_task = None
@@ -403,9 +503,9 @@ class RaftNode:
             return
         self.logger.debug('Become candidate')
         self.term += 1
-        self.log_file.setTerm(self.term)
+        # self.log_file.setTerm(self.term)
         self.votedFor = self.nodeId
-        self.log_file.setVoteFor(self.nodeId)
+        # self.log_file.setVoteFor(self.nodeId)
         tasks = []
         voteCount = 1
         for channel in self.channels:
@@ -414,8 +514,8 @@ class RaftNode:
             tasks.append(stub.RequestVote(RequestVoteRequest(
                 term=self.term,
                 candidateId=self.nodeId,
-                lastLogIndex=self.logs[-1].logIndex,
-                lastLogTerm=self.logs[-1].term
+                lastLogIndex=self.getLastLogIdx(),
+                lastLogTerm=self.getLastLogTerm()
             ), timeout=1.5))
 
         resps, _ = await asyncio.wait(tasks, timeout=2)
@@ -431,12 +531,12 @@ class RaftNode:
                 self.logger.debug(f'Get Vote, current vote number: {voteCount}')
             if resp.term > self.term:
                 self.term = resp.term
-                self.log_file.setTerm(self.term)
+                # self.log_file.setTerm(self.term)
             if voteCount > self.nodeNum/2:
                 self.leaderId = self.nodeId
                 break
         self.votedFor = None
-        self.log_file.setVoteFor(None)
+        # self.log_file.setVoteFor(None)
 
         self.logger.info(f'Become leader. Get vote number: {voteCount}. Current Term: {self.term}')
         self.logger.debug(f'isLeader: { self.isLeader()}')
@@ -468,6 +568,46 @@ class RaftNode:
         self.initRPCClient()
 
         await self._run()
+    
+    async def sendRandomMsg(self):
+        tasks = []
+        entry = Entry(
+            clientId='test',
+            commandId=5,
+            operation='TEST',
+            key=str(random.choice(list(string.ascii_letters))),
+            value1=str(random.randint(1, 100)),
+            value2=str(random.randint(1,100)),
+        )
+        log_entry = LogEntry(
+                term = self.term,
+                logIndex = self.getLastLogIdx()+1,
+                command = entry
+            )
+        self.appendLog((log_entry, ))
+        # self.log_file.appendEntries(
+        #     (log_entry,)
+        # )
+        # self.logs.append(log_entry)
+        self.data[entry.key] = entry.value2
+        self.logger.debug(f'Current data: {self.data}')
+        for channel in self.channels:
+            stub = RaftStub(channel)
+            tasks.append(stub.AppendEntries(
+                AppendEntriesRequest(
+                    term = self.term,
+                    leaderId = self.leaderId,
+                    prevLogIndex = self.getLastLogIdx(),
+                    prevLogTerm = self.getLastLogTerm(),
+                    leaderCommit = self.commitIndex,
+                    entries = (
+                        entry,
+                    )
+                ),
+                timeout=1.5
+            ))
+        
+        await asyncio.wait(tasks)
 
 async def randomCrash(ids, nodes, tasks, timeout=5):
     await asyncio.sleep(timeout)
