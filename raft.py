@@ -67,7 +67,8 @@ class RaftRPC(RaftServicer):
         self.node.leader_alive = True
         self.logger.debug(f'Entries: {request.entries}')
 
-        if request.term >= self.node.term:
+        if request.term >= self.node.term \
+            and self.node.checkLogMatch(request):
             if self.node.election_timer_task is not None:
                 # switch to follower
                 self.logger.info(f'Become follower: heartbeat from {request.leaderId}')
@@ -95,7 +96,7 @@ class RaftRPC(RaftServicer):
                     command = entry
                     )
                 self.node.appendLog([log_entry])
-                # self.node.logs.append(log_entry)
+
                 # apply
                 self.node.data[entry.key] = entry.value2
 
@@ -108,6 +109,7 @@ class RaftRPC(RaftServicer):
             )
         # Reject msg from old term
         else:
+            self.logger.debug(f'Reject append index: {request.term}, {self.node.term}, {request.prevLogIndex}, {self.node.getLastLogIdx()}, {request.prevLogTerm}, {self.node.getLastLogTerm()}')
             return AppendEntriesResponse(
                 term=self.node.term,
                 success=False
@@ -162,6 +164,10 @@ class RaftPersistentStateMachine:
             self.state_file.seek(0)
             self._votedFor = votedFor
     
+    def checkLogMatch(self, req: AppendEntriesRequest):
+        return req.prevLogIndex == self.getLastLogIdx()\
+            and req.prevLogTerm == self.getLastLogTerm()
+
     def reloadPersistentStates(self):
         if not os.path.exists(self.log_path):
             self.log_file = open(self.log_path, 'ab+')
@@ -355,7 +361,7 @@ class RaftNode(RaftPersistentStateMachine):
         await self._run()
     
     async def sendHeartbeat(self):
-        await self.sendRandomMsg()
+        await self.sendRandomMsg(False)
         
     
     async def leaderAliveTimer(self, timeout):
@@ -378,7 +384,7 @@ class RaftNode(RaftPersistentStateMachine):
     
     async def heartbeatTimer(self, timeout):
         await asyncio.sleep(timeout)
-        await self.sendHeartbeat()
+        await self.sendRandomMsg()
         self.logger.debug('Send heartbeat')
         await self.heartbeatTimer(timeout)
     
@@ -457,32 +463,38 @@ class RaftNode(RaftPersistentStateMachine):
 
         await self._run()
     
-    async def sendRandomMsg(self):
-        tasks = []
-        entry = Entry(
-            clientId='test',
-            commandId=5,
-            operation='TEST',
-            key=str(random.choice(list(string.ascii_letters))),
-            value1=str(random.randint(1, 100)),
-            value2=str(random.randint(1,100)),
-        )
-        log_entry = LogEntry(
-                term = self.term,
-                logIndex = self.getLastLogIdx()+1,
-                command = entry
+    async def sendRandomMsg(self, msg=True):
+        if not msg:
+            tasks = []
+            for channel in self.channels:
+                stub = RaftStub(channel)
+                tasks.append(stub.AppendEntries(
+                    AppendEntriesRequest(
+                        term = self.term,
+                        leaderId = self.leaderId,
+                        prevLogIndex = self.getLastLogIdx(),
+                        prevLogTerm = self.getLastLogTerm(),
+                        leaderCommit = self.commitIndex,
+                    ),
+                    timeout=1.5
+                ))
+            await asyncio.wait(tasks)
+        else:
+            tasks = []
+            entry = Entry(
+                clientId='test',
+                commandId=5,
+                operation='TEST',
+                key=str(random.choice(list(string.ascii_letters))),
+                value1=str(random.randint(1, 100)),
+                value2=str(random.randint(1,100)),
             )
-        self.appendLog((log_entry, ))
-        # self.log_file.appendEntries(
-        #     (log_entry,)
-        # )
-        # self.logs.append(log_entry)
-        self.data[entry.key] = entry.value2
-        self.logger.debug(f'Current data: {self.data}')
-        for channel in self.channels:
-            stub = RaftStub(channel)
-            tasks.append(stub.AppendEntries(
-                AppendEntriesRequest(
+            log_entry = LogEntry(
+                    term = self.term,
+                    logIndex = self.getLastLogIdx()+1,
+                    command = entry
+                )
+            req = AppendEntriesRequest(
                     term = self.term,
                     leaderId = self.leaderId,
                     prevLogIndex = self.getLastLogIdx(),
@@ -491,11 +503,19 @@ class RaftNode(RaftPersistentStateMachine):
                     entries = (
                         entry,
                     )
-                ),
-                timeout=1.5
-            ))
-        
-        await asyncio.wait(tasks)
+                )
+            self.appendLog((log_entry, ))
+
+            self.data[entry.key] = entry.value2
+            self.logger.debug(f'Current data: {self.data}')
+            for channel in self.channels:
+                stub = RaftStub(channel)
+                tasks.append(stub.AppendEntries(
+                    req,
+                    timeout=1.5
+                ))
+            
+            await asyncio.wait(tasks)
 
 async def randomCrash(ids, nodes, tasks, timeout=5):
     await asyncio.sleep(timeout)
