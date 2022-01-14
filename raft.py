@@ -47,9 +47,9 @@ class RaftRPC(RaftServicer):
                 and request.lastLogIndex >= self.node.logs[-1].logIndex):
             self.node.votedFor = request.candidateId
             self.logger.debug(f'Vote grant {request.candidateId}')
-            if self.node.leader_alive_task:
-                self.node.leader_alive_task.cancel()
-                self.node.leader_alive_task = None
+            # if self.node.leader_alive_task:
+            #     self.node.leader_alive_task.cancel()
+            #     self.node.leader_alive_task = None
                 
             return RequestVoteResponse(
                 term=self.node.term,
@@ -115,80 +115,6 @@ class RaftRPC(RaftServicer):
 
         
 
-class RaftFile:
-    '''
-    Log file structure
-    4 bytes term
-    512 bytes voteFor
-    k bytes log entries
-    '''
-    def __init__(self, log_path):
-        self.log_path = log_path
-        if not os.path.exists(self.log_path):
-            self.log_file = open(self.log_path, 'ab+')
-            self.state_file = open(self.log_path, 'rb+')
-            self.log_file.write(struct.pack('I', 0))
-            self.log_file.write(bytes([0] * 512))
-            self.log_file.flush()
-            self.state_file.seek(0)
-        else:
-            self.log_file = open(self.log_path, 'ab+')
-            self.state_file = open(self.log_path, 'rb+')
-        # print(log_path)
-        
-    
-    def getTerm(self):
-        res = struct.unpack('I', self.state_file.read(4))[0]
-        self.state_file.seek(0)
-        return res
-    
-    def getVoteFor(self):
-        self.state_file.seek(4)
-        len_id = struct.unpack('I', self.state_file.read(4))[0]
-        res = self.state_file.read(len_id)
-        self.state_file.seek(0)
-        return res
-    
-    def readLogs(self):
-        logs = []
-        self.log_file.seek(4+512)
-        len_data = self.log_file.read(4)
-        while len_data:
-            len_ = struct.unpack('i', len_data)[0]
-            entry = LogEntry()
-            entry.ParseFromString(self.log_file.read(len_))
-            logs.append(copy.copy(entry))
-            len_data = self.log_file.read(4)
-        return logs
-
-    
-    def setTerm(self, term):
-        self.state_file.write(struct.pack('I', term))
-        self.state_file.flush()
-        self.state_file.seek(0)
-        
-    
-    def setVoteFor(self, voteFor):
-        self.state_file.seek(4)
-        if voteFor is None:
-            self.state_file.write(struct.pack('I', 0))
-            self.state_file.flush()
-            self.state_file.seek(0)
-            return
-        voteFor = voteFor.encode()
-        len_id = len(voteFor)
-        self.state_file.write(struct.pack('I', len_id))
-        self.state_file.write(voteFor)
-        self.state_file.flush()
-        self.state_file.seek(0)
-
-    def appendEntries(self, entries: List[LogEntry]):
-        for lentry in entries:
-            data = lentry.SerializeToString()
-            record = struct.pack('i', len(data)) + data
-            self.log_file.write(record)
-            self.log_file.flush()
-
 class RaftPersistentStateMachine:
     # log index start from 1 (not 0)
     def __init__(self, log_path):
@@ -196,25 +122,8 @@ class RaftPersistentStateMachine:
         self._term = 0
         self._votedFor = None
         self.logs = []
-        if not os.path.exists(self.log_path):
-            self.log_file = open(self.log_path, 'ab+')
-            self.state_file = open(self.log_path, 'rb+')
-            self.log_file.write(struct.pack('I', 0))
-            self.log_file.write(bytes([0] * 512))
-            self.log_file.flush()
-            self.state_file.seek(0)
-            self.setTerm(0)
-            self.setVotedFor(None)
-            self.logs = [LogEntry(
-                    term=0,
-                    logIndex=0
-                )]
-        else:
-            self.log_file = open(self.log_path, 'ab+')
-            self.state_file = open(self.log_path, 'rb+')
-            self.readTerm()
-            self.readVoteFor()
-            self.readLogs()
+        self.reloadPersistentStates()
+        
 
     def getLastLogIdx(self):
         return self.logs[-1].logIndex
@@ -253,6 +162,27 @@ class RaftPersistentStateMachine:
             self.state_file.seek(0)
             self._votedFor = votedFor
     
+    def reloadPersistentStates(self):
+        if not os.path.exists(self.log_path):
+            self.log_file = open(self.log_path, 'ab+')
+            self.state_file = open(self.log_path, 'rb+')
+            self.log_file.write(struct.pack('I', 0))
+            self.log_file.write(bytes([0] * 512))
+            self.log_file.flush()
+            self.state_file.seek(0)
+            self.setTerm(0)
+            self.setVotedFor(None)
+            self.logs = [LogEntry(
+                    term=0,
+                    logIndex=0
+                )]
+        else:
+            self.log_file = open(self.log_path, 'ab+')
+            self.state_file = open(self.log_path, 'rb+')
+            self.readTerm()
+            self.readVoteFor()
+            self.readLogs()
+    
     def readTerm(self):
         res = struct.unpack('I', self.state_file.read(4))[0]
         self.state_file.seek(0)
@@ -286,12 +216,6 @@ class RaftPersistentStateMachine:
     term = property(getTerm, setTerm)
 
 class RaftNode(RaftPersistentStateMachine):
-    # def __setattr__(self, __name: str, __value) -> None:
-        # if __name == 'term':
-        #     self.log_file.setTerm(__value)
-        # elif __name == 'voteFor':
-        #     self.log_file.setTerm(__value)
-        # super().__setattr__(__name, __value)
     
     def __init__(self, nodeId, peerIds):
         
@@ -303,14 +227,12 @@ class RaftNode(RaftPersistentStateMachine):
 
         super().__init__(f'./{self.nodeId.split(":")[1]}_raft.binlog')
 
-        # Log file
-        # self.log_file = RaftFile(f'./{self.nodeId.split(":")[1]}_raft.binlog')
-        # self.logger.debug(self.log_file.readLogs())
-
         # In-memory DB
         self.data = {}
 
-        self.initAll()
+        self.initState()
+        self.resetTimers()
+        self.initMonitor()
 
         self.initRPCClient()
         self.initRPCServer()
@@ -323,26 +245,8 @@ class RaftNode(RaftPersistentStateMachine):
         h.setLevel(logging.DEBUG)
         self.logger.addHandler(h)
         self.logger.setLevel(logging.DEBUG)
-    
-    def initAll(self):
-        self.initState()
-
-        # Convenient state
-        self.leader_alive = False
-        self.leaderId = None
-        self.running_state = 'stopped'
-
-        self.resetTimers()
-
-        self.initMonitor()
-
 
     def initState(self):
-
-        # # Persistent state
-        # self.votedFor = None
-        # self.term = 0
-        # self.logs = [LogEntry(term = 0, logIndex=0)]
 
         # Volatile state
         self.commitIndex = 0
@@ -352,6 +256,11 @@ class RaftNode(RaftPersistentStateMachine):
         lastLogIndex = self.getLastLogIdx()
         self.nextIndex = [lastLogIndex+1] * (self.nodeNum - 1)
         self.matchIndex = [0] * (self.nodeNum - 1)
+
+        # Convenient state
+        self.leader_alive = False
+        self.leaderId = None
+        self.running_state = 'stopped'
     
     def initRPCServer(self):
         self.raft_server = grpc.aio.server(
@@ -447,32 +356,7 @@ class RaftNode(RaftPersistentStateMachine):
     
     async def sendHeartbeat(self):
         await self.sendRandomMsg()
-        # tasks = []
-        # entry = Entry(
-        #     clientId='test',
-        #     commandId=5,
-        #     operation='TEST',
-        #     key=str(random.choice(list(string.ascii_letters))),
-        #     value1=str(random.randint(1, 100)),
-        #     value2=str(random.randint(1,100)),
-        # )
-        # for channel in self.channels:
-        #     stub = RaftStub(channel)
-        #     tasks.append(stub.AppendEntries(
-        #         AppendEntriesRequest(
-        #             term = self.term,
-        #             leaderId = self.leaderId,
-        #             prevLogIndex = self.logs[-1].logIndex,
-        #             prevLogTerm = self.logs[-1].term,
-        #             leaderCommit = self.commitIndex,
-        #             entries = (
-        #                 entry,
-        #             )
-        #         ),
-        #         timeout=1.5
-        #     ))
         
-        # await asyncio.wait(tasks)
     
     async def leaderAliveTimer(self, timeout):
         await asyncio.sleep(timeout)
@@ -501,7 +385,7 @@ class RaftNode(RaftPersistentStateMachine):
     async def electionTimer(self, timeout):
         if self.votedFor != None:
             return
-        self.logger.debug('Become candidate')
+        self.logger.info('Become candidate')
         self.term += 1
         # self.log_file.setTerm(self.term)
         self.votedFor = self.nodeId
@@ -563,9 +447,13 @@ class RaftNode(RaftPersistentStateMachine):
             await channel.close()
 
     async def resume(self):
-        self.initAll()
-        self.initRPCServer()
+        self.reloadPersistentStates()
+        self.initState()
+        self.resetTimers()
+        self.initMonitor()
+
         self.initRPCClient()
+        self.initRPCServer()
 
         await self._run()
     
