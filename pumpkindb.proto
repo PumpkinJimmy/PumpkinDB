@@ -67,9 +67,6 @@ message LogEntry{
     Entry command = 3;
 }
 
-message LogEntries{
-    repeated LogEntry entries = 1;
-}
 
 message AppendEntriesRequest {
     uint32 term = 1;

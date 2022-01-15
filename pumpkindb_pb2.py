@@ -19,7 +19,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   syntax='proto3',
   serialized_options=None,
   create_key=_descriptor._internal_create_key,
-  serialized_pb=b'\n\x0fpumpkindb.proto\" \n\x0cGreetRequest\x12\x10\n\x08\x63lientId\x18\x01 \x01(\t\",\n\rGreetResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x0b\n\x03msg\x18\x02 \x01(\t\">\n\nGetRequest\x12\x10\n\x08\x63lientId\x18\x01 \x01(\t\x12\x11\n\tcommandId\x18\x02 \x01(\x04\x12\x0b\n\x03key\x18\x03 \x01(\t\"\x1e\n\rValueResponse\x12\r\n\x05value\x18\x01 \x01(\t\"M\n\nPutRequest\x12\x10\n\x08\x63lientId\x18\x01 \x01(\t\x12\x11\n\tcommandId\x18\x02 \x01(\x04\x12\x0b\n\x03key\x18\x03 \x01(\t\x12\r\n\x05value\x18\x04 \x01(\t\"b\n\x12RequestVoteRequest\x12\x0c\n\x04term\x18\x01 \x01(\r\x12\x13\n\x0b\x63\x61ndidateId\x18\x02 \x01(\t\x12\x14\n\x0clastLogIndex\x18\x03 \x01(\x04\x12\x13\n\x0blastLogTerm\x18\x04 \x01(\r\"8\n\x13RequestVoteResponse\x12\x0c\n\x04term\x18\x01 \x01(\r\x12\x13\n\x0bvoteGranted\x18\x02 \x01(\x08\"l\n\x05\x45ntry\x12\x10\n\x08\x63lientId\x18\x01 \x01(\t\x12\x11\n\tcommandId\x18\x02 \x01(\x04\x12\x11\n\toperation\x18\x03 \x01(\t\x12\x0b\n\x03key\x18\x04 \x01(\t\x12\x0e\n\x06value1\x18\x05 \x01(\t\x12\x0e\n\x06value2\x18\x06 \x01(\t\"C\n\x08LogEntry\x12\x0c\n\x04term\x18\x01 \x01(\r\x12\x10\n\x08logIndex\x18\x02 \x01(\x04\x12\x17\n\x07\x63ommand\x18\x03 \x01(\x0b\x32\x06.Entry\"(\n\nLogEntries\x12\x1a\n\x07\x65ntries\x18\x01 \x03(\x0b\x32\t.LogEntry\"\x93\x01\n\x14\x41ppendEntriesRequest\x12\x0c\n\x04term\x18\x01 \x01(\r\x12\x10\n\x08leaderId\x18\x02 \x01(\t\x12\x14\n\x0cprevLogIndex\x18\x03 \x01(\x04\x12\x13\n\x0bprevLogTerm\x18\x04 \x01(\r\x12\x14\n\x0cleaderCommit\x18\x05 \x01(\x04\x12\x1a\n\x07\x65ntries\x18\x06 \x03(\x0b\x32\t.LogEntry\"6\n\x15\x41ppendEntriesResponse\x12\x0c\n\x04term\x18\x01 \x01(\r\x12\x0f\n\x07success\x18\x02 \x01(\x08\"\x89\x01\n\x06Status\x12\x0e\n\x06nodeId\x18\x07 \x01(\t\x12\x10\n\x08leaderId\x18\x01 \x01(\t\x12\x0f\n\x07voteFor\x18\x02 \x01(\t\x12\x0c\n\x04term\x18\x03 \x01(\r\x12\x13\n\x0b\x63ommitIndex\x18\x04 \x01(\x04\x12\x13\n\x0blastApplied\x18\x05 \x01(\x04\x12\x14\n\x0clastLogIndex\x18\x06 \x01(\x04\"\"\n\x0fMonitorResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x32\x81\x01\n\tPumpkinDB\x12(\n\x05Greet\x12\r.GreetRequest\x1a\x0e.GreetResponse\"\x00\x12$\n\x03Get\x12\x0b.GetRequest\x1a\x0e.ValueResponse\"\x00\x12$\n\x03Put\x12\x0b.PutRequest\x1a\x0e.ValueResponse\"\x00\x32\x80\x01\n\x04Raft\x12\x38\n\x0bRequestVote\x12\x13.RequestVoteRequest\x1a\x14.RequestVoteResponse\x12>\n\rAppendEntries\x12\x15.AppendEntriesRequest\x1a\x16.AppendEntriesResponse22\n\x07Monitor\x12\'\n\nSendStatus\x12\x07.Status\x1a\x10.MonitorResponseb\x06proto3'
+  serialized_pb=b'\n\x0fpumpkindb.proto\" \n\x0cGreetRequest\x12\x10\n\x08\x63lientId\x18\x01 \x01(\t\",\n\rGreetResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x0b\n\x03msg\x18\x02 \x01(\t\">\n\nGetRequest\x12\x10\n\x08\x63lientId\x18\x01 \x01(\t\x12\x11\n\tcommandId\x18\x02 \x01(\x04\x12\x0b\n\x03key\x18\x03 \x01(\t\"\x1e\n\rValueResponse\x12\r\n\x05value\x18\x01 \x01(\t\"M\n\nPutRequest\x12\x10\n\x08\x63lientId\x18\x01 \x01(\t\x12\x11\n\tcommandId\x18\x02 \x01(\x04\x12\x0b\n\x03key\x18\x03 \x01(\t\x12\r\n\x05value\x18\x04 \x01(\t\"b\n\x12RequestVoteRequest\x12\x0c\n\x04term\x18\x01 \x01(\r\x12\x13\n\x0b\x63\x61ndidateId\x18\x02 \x01(\t\x12\x14\n\x0clastLogIndex\x18\x03 \x01(\x04\x12\x13\n\x0blastLogTerm\x18\x04 \x01(\r\"8\n\x13RequestVoteResponse\x12\x0c\n\x04term\x18\x01 \x01(\r\x12\x13\n\x0bvoteGranted\x18\x02 \x01(\x08\"l\n\x05\x45ntry\x12\x10\n\x08\x63lientId\x18\x01 \x01(\t\x12\x11\n\tcommandId\x18\x02 \x01(\x04\x12\x11\n\toperation\x18\x03 \x01(\t\x12\x0b\n\x03key\x18\x04 \x01(\t\x12\x0e\n\x06value1\x18\x05 \x01(\t\x12\x0e\n\x06value2\x18\x06 \x01(\t\"C\n\x08LogEntry\x12\x0c\n\x04term\x18\x01 \x01(\r\x12\x10\n\x08logIndex\x18\x02 \x01(\x04\x12\x17\n\x07\x63ommand\x18\x03 \x01(\x0b\x32\x06.Entry\"\x93\x01\n\x14\x41ppendEntriesRequest\x12\x0c\n\x04term\x18\x01 \x01(\r\x12\x10\n\x08leaderId\x18\x02 \x01(\t\x12\x14\n\x0cprevLogIndex\x18\x03 \x01(\x04\x12\x13\n\x0bprevLogTerm\x18\x04 \x01(\r\x12\x14\n\x0cleaderCommit\x18\x05 \x01(\x04\x12\x1a\n\x07\x65ntries\x18\x06 \x03(\x0b\x32\t.LogEntry\"6\n\x15\x41ppendEntriesResponse\x12\x0c\n\x04term\x18\x01 \x01(\r\x12\x0f\n\x07success\x18\x02 \x01(\x08\"\x89\x01\n\x06Status\x12\x0e\n\x06nodeId\x18\x07 \x01(\t\x12\x10\n\x08leaderId\x18\x01 \x01(\t\x12\x0f\n\x07voteFor\x18\x02 \x01(\t\x12\x0c\n\x04term\x18\x03 \x01(\r\x12\x13\n\x0b\x63ommitIndex\x18\x04 \x01(\x04\x12\x13\n\x0blastApplied\x18\x05 \x01(\x04\x12\x14\n\x0clastLogIndex\x18\x06 \x01(\x04\"\"\n\x0fMonitorResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x32\x81\x01\n\tPumpkinDB\x12(\n\x05Greet\x12\r.GreetRequest\x1a\x0e.GreetResponse\"\x00\x12$\n\x03Get\x12\x0b.GetRequest\x1a\x0e.ValueResponse\"\x00\x12$\n\x03Put\x12\x0b.PutRequest\x1a\x0e.ValueResponse\"\x00\x32\x80\x01\n\x04Raft\x12\x38\n\x0bRequestVote\x12\x13.RequestVoteRequest\x1a\x14.RequestVoteResponse\x12>\n\rAppendEntries\x12\x15.AppendEntriesRequest\x1a\x16.AppendEntriesResponse22\n\x07Monitor\x12\'\n\nSendStatus\x12\x07.Status\x1a\x10.MonitorResponseb\x06proto3'
 )
 
 
@@ -432,38 +432,6 @@ _LOGENTRY = _descriptor.Descriptor(
 )
 
 
-_LOGENTRIES = _descriptor.Descriptor(
-  name='LogEntries',
-  full_name='LogEntries',
-  filename=None,
-  file=DESCRIPTOR,
-  containing_type=None,
-  create_key=_descriptor._internal_create_key,
-  fields=[
-    _descriptor.FieldDescriptor(
-      name='entries', full_name='LogEntries.entries', index=0,
-      number=1, type=11, cpp_type=10, label=3,
-      has_default_value=False, default_value=[],
-      message_type=None, enum_type=None, containing_type=None,
-      is_extension=False, extension_scope=None,
-      serialized_options=None, file=DESCRIPTOR,  create_key=_descriptor._internal_create_key),
-  ],
-  extensions=[
-  ],
-  nested_types=[],
-  enum_types=[
-  ],
-  serialized_options=None,
-  is_extendable=False,
-  syntax='proto3',
-  extension_ranges=[],
-  oneofs=[
-  ],
-  serialized_start=611,
-  serialized_end=651,
-)
-
-
 _APPENDENTRIESREQUEST = _descriptor.Descriptor(
   name='AppendEntriesRequest',
   full_name='AppendEntriesRequest',
@@ -526,8 +494,8 @@ _APPENDENTRIESREQUEST = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=654,
-  serialized_end=801,
+  serialized_start=612,
+  serialized_end=759,
 )
 
 
@@ -565,8 +533,8 @@ _APPENDENTRIESRESPONSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=803,
-  serialized_end=857,
+  serialized_start=761,
+  serialized_end=815,
 )
 
 
@@ -639,8 +607,8 @@ _STATUS = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=860,
-  serialized_end=997,
+  serialized_start=818,
+  serialized_end=955,
 )
 
 
@@ -671,12 +639,11 @@ _MONITORRESPONSE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=999,
-  serialized_end=1033,
+  serialized_start=957,
+  serialized_end=991,
 )
 
 _LOGENTRY.fields_by_name['command'].message_type = _ENTRY
-_LOGENTRIES.fields_by_name['entries'].message_type = _LOGENTRY
 _APPENDENTRIESREQUEST.fields_by_name['entries'].message_type = _LOGENTRY
 DESCRIPTOR.message_types_by_name['GreetRequest'] = _GREETREQUEST
 DESCRIPTOR.message_types_by_name['GreetResponse'] = _GREETRESPONSE
@@ -687,7 +654,6 @@ DESCRIPTOR.message_types_by_name['RequestVoteRequest'] = _REQUESTVOTEREQUEST
 DESCRIPTOR.message_types_by_name['RequestVoteResponse'] = _REQUESTVOTERESPONSE
 DESCRIPTOR.message_types_by_name['Entry'] = _ENTRY
 DESCRIPTOR.message_types_by_name['LogEntry'] = _LOGENTRY
-DESCRIPTOR.message_types_by_name['LogEntries'] = _LOGENTRIES
 DESCRIPTOR.message_types_by_name['AppendEntriesRequest'] = _APPENDENTRIESREQUEST
 DESCRIPTOR.message_types_by_name['AppendEntriesResponse'] = _APPENDENTRIESRESPONSE
 DESCRIPTOR.message_types_by_name['Status'] = _STATUS
@@ -757,13 +723,6 @@ LogEntry = _reflection.GeneratedProtocolMessageType('LogEntry', (_message.Messag
   })
 _sym_db.RegisterMessage(LogEntry)
 
-LogEntries = _reflection.GeneratedProtocolMessageType('LogEntries', (_message.Message,), {
-  'DESCRIPTOR' : _LOGENTRIES,
-  '__module__' : 'pumpkindb_pb2'
-  # @@protoc_insertion_point(class_scope:LogEntries)
-  })
-_sym_db.RegisterMessage(LogEntries)
-
 AppendEntriesRequest = _reflection.GeneratedProtocolMessageType('AppendEntriesRequest', (_message.Message,), {
   'DESCRIPTOR' : _APPENDENTRIESREQUEST,
   '__module__' : 'pumpkindb_pb2'
@@ -801,8 +760,8 @@ _PUMPKINDB = _descriptor.ServiceDescriptor(
   index=0,
   serialized_options=None,
   create_key=_descriptor._internal_create_key,
-  serialized_start=1036,
-  serialized_end=1165,
+  serialized_start=994,
+  serialized_end=1123,
   methods=[
   _descriptor.MethodDescriptor(
     name='Greet',
@@ -847,8 +806,8 @@ _RAFT = _descriptor.ServiceDescriptor(
   index=1,
   serialized_options=None,
   create_key=_descriptor._internal_create_key,
-  serialized_start=1168,
-  serialized_end=1296,
+  serialized_start=1126,
+  serialized_end=1254,
   methods=[
   _descriptor.MethodDescriptor(
     name='RequestVote',
@@ -883,8 +842,8 @@ _MONITOR = _descriptor.ServiceDescriptor(
   index=2,
   serialized_options=None,
   create_key=_descriptor._internal_create_key,
-  serialized_start=1298,
-  serialized_end=1348,
+  serialized_start=1256,
+  serialized_end=1306,
   methods=[
   _descriptor.MethodDescriptor(
     name='SendStatus',

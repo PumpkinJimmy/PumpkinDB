@@ -10,8 +10,10 @@ from pprint import pprint
 import logging
 from typing import List
 import copy
+import json
 
 import grpc
+from google.protobuf import json_format
 
 from pumpkindb_pb2_grpc import (
     RaftServicer,
@@ -90,19 +92,17 @@ class RaftRPC(RaftServicer):
             # add logs
             for entry in request.entries:
                 # write log
-                # FIXME: ERROR in older log replication
-                # log_entry = LogEntry(
-                #     term=self.node.term,
-                #     logIndex=len(self.node.logs),
-                #     command = entry
-                #     )
                 self.node.appendLog([entry])
 
                 # apply
-                self.node.data[entry.command.key] = entry.command.value2
+                if self.node.apply_task is None:
+                    self.node.apply_task = asyncio.create_task(
+                        self.node.applyEntriesCoro()
+                    )
+                # self.node.data[entry.command.key] = entry.command.value2
 
             if request.leaderCommit > self.node.commitIndex:
-                self.node.commitIndex = min(request.leaderCommit, len(self.node.logs)-1)
+                self.node.commitIndex = min(request.leaderCommit, self.node.getLastLogIdx())
             self.logger.debug(f'Current data table: {self.node.data}')
             return AppendEntriesResponse(
                 term=self.node.term,
@@ -147,42 +147,39 @@ class RaftPersistentStateMachine:
             return 0
 
     def appendLog(self, entries: List[LogEntry]):
+        # self.log_file.seek(-1, 2)
         for le in entries:
-            if le.logIndex < len(self.logs):
-                # FIXME: undo the op in the thrown logs
-                # fix wrong log
-                self.logs = self.logs[:le.logIndex] + [le]
-            else:
-                self.logs.append(le)
-        # self.logs.extend(entries)
+            if le.logIndex <= self.getLastLogIdx():
+                if le.term != self.logs[le.logIndex]:
+                    self.logs = self.logs[0:le.logIndex]
+                    self.log_file.seek(0)
+                    for old_le in self.logs[1:]:
+                        line = json.dumps(json_format.MessageToDict(old_le))
+                        self.log_file.write(line)
+                        self.log_file.write('\n')
+            line = json.dumps(json_format.MessageToDict(le))
+            self.log_file.write(line)
+            self.log_file.write('\n')
+            self.log_file.flush()
+            self.logs.append(le)
+            
+        # sign for end
+        # self.log_file.write('\n')
+        # self.log_file.flush()
+
+
     
     def getTerm(self):
         return self._term
     
     def setTerm(self, term):
-        self.state_file.write(struct.pack('I', term))
-        self.state_file.flush()
-        self.state_file.seek(0)
         self._term = term
 
     def getVotedFor(self):
         return self._votedFor
 
     def setVotedFor(self, votedFor):
-        self.state_file.seek(4)
-        if votedFor is None:
-            self.state_file.write(struct.pack('I', 0))
-            self.state_file.flush()
-            self.state_file.seek(0)
-            self._votedFor = votedFor
-        else:
-            voteFor = votedFor.encode()
-            len_id = len(voteFor)
-            self.state_file.write(struct.pack('I', len_id))
-            self.state_file.write(voteFor)
-            self.state_file.flush()
-            self.state_file.seek(0)
-            self._votedFor = votedFor
+        self._votedFor = votedFor
     
     def checkLogMatch(self, req: AppendEntriesRequest):
         if req.prevLogIndex <= self.getLastLogIdx():
@@ -192,12 +189,8 @@ class RaftPersistentStateMachine:
 
     def reloadPersistentStates(self):
         if not os.path.exists(self.log_path):
-            self.log_file = open(self.log_path, 'ab+')
-            self.state_file = open(self.log_path, 'rb+')
-            self.log_file.write(struct.pack('I', 0))
-            self.log_file.write(bytes([0] * 512))
-            self.log_file.flush()
-            self.state_file.seek(0)
+            self.log_file = open(self.log_path, 'w+')
+            self.state_file = open(self.log_path + '.state', 'w+')
             self.setTerm(0)
             self.setVotedFor(None)
             self.logs = [LogEntry(
@@ -205,39 +198,27 @@ class RaftPersistentStateMachine:
                     logIndex=0
                 )]
         else:
-            self.log_file = open(self.log_path, 'ab+')
-            self.state_file = open(self.log_path, 'rb+')
+            self.log_file = open(self.log_path, 'r+')
+            self.state_file = open(self.log_path, 'r+')
             self.readTerm()
             self.readVoteFor()
             self.readLogs()
     
     def readTerm(self):
-        res = struct.unpack('I', self.state_file.read(4))[0]
-        self.state_file.seek(0)
-        self.setTerm(res)
+        self._term = 0
 
     def readVoteFor(self):
-        self.state_file.seek(4)
-        len_id = struct.unpack('I', self.state_file.read(4))[0]
-        res = self.state_file.read(len_id)
-        self.state_file.seek(0)
-        if not len_id: self.setVotedFor(None)
-        else:
-            self.setVotedFor(res.decode())
+        self._votedFor = None
 
     def readLogs(self):
-        logs = [LogEntry(
-            term=0,
-            logIndex=0
-        )]
-        self.log_file.seek(4+512)
-        len_data = self.log_file.read(4)
-        while len_data:
-            len_ = struct.unpack('i', len_data)[0]
-            entry = LogEntry()
-            entry.ParseFromString(self.log_file.read(len_))
-            logs.append(copy.copy(entry))
-            len_data = self.log_file.read(4)
+        logs = [LogEntry(term=0, logIndex=0)]
+        self.log_file.seek(0)
+        line = self.log_file.readline().strip()
+        while line:
+            e = LogEntry()
+            json_format.Parse(line.encode(), e)
+            logs.append(e)
+            line = self.log_file.readline().strip()
         self.logs = logs
     
     votedFor = property(getVotedFor, setVotedFor)
@@ -256,10 +237,15 @@ class RaftNode(RaftPersistentStateMachine):
         super().__init__(f'./{self.nodeId.split(":")[1]}_raft.binlog')
 
         # In-memory DB
-        self.data = {}
+        self.initDB()
 
         self.initState()
         self.resetTimers()
+
+        # apply process
+        self.apply_task = None
+
+        # monitor
         self.initMonitor()
 
         self.initRPCClient()
@@ -273,6 +259,9 @@ class RaftNode(RaftPersistentStateMachine):
         h.setLevel(logging.DEBUG)
         self.logger.addHandler(h)
         self.logger.setLevel(logging.DEBUG)
+    
+    def initDB(self):
+        self.data = {}
 
     def initState(self):
 
@@ -476,6 +465,7 @@ class RaftNode(RaftPersistentStateMachine):
 
     async def resume(self):
         self.reloadPersistentStates()
+        self.initDB()
         self.initState()
         self.resetTimers()
         self.initMonitor()
@@ -485,6 +475,23 @@ class RaftNode(RaftPersistentStateMachine):
 
         await self._run()
     
+    async def applyLog(self, entry: Entry):
+        if entry.operation == 'TEST' or entry.operation == 'SET':
+            await self.dbSet(entry.key, entry.value2)
+
+    async def applyEntriesCoro(self):
+        while self.lastApplied < self.commitIndex:
+            await self.applyLog(self.logs[self.lastApplied+1].command)
+            self.lastApplied += 1
+        self.apply_task = None
+
+
+    async def dbSet(self, key, value):
+        self.data[key] = value
+
+    async def dbGet(self, key):
+        return self.data.get(key, None)
+
     async def sendRandomMsg(self, msg=True):
         if not msg:
             tasks = []
@@ -552,7 +559,13 @@ class RaftNode(RaftPersistentStateMachine):
         tasks = []
         self.appendLog((log_entry, ))
 
-        self.data[entry.key] = entry.value2
+        # apply
+        if self.apply_task is None:
+            self.apply_task = asyncio.create_task(
+                self.applyEntriesCoro()
+            )
+        # self.data[entry.key] = entry.value2
+
         self.logger.debug(f'Current data: {self.data}')
         for i in range(len(self.peerIds)):
             self.logger.debug(f'Start copying {self.nextIndex[i]} at Peer {i}')
@@ -570,13 +583,6 @@ class RaftNode(RaftPersistentStateMachine):
             self.logger.debug(f'Got {resp_count} response currently')
         self.commitIndex += 1
         self.logger.debug(f'Got {resp_count} response, entry committed')
-            # stub = RaftStub(channel)
-            # tasks.append(stub.AppendEntries(
-            #     req,
-            #     timeout=1.5
-            # ))
-        
-        # await asyncio.wait(tasks)
     
     async def replicateLog(self, peerIdx):
         channel = self.channels[peerIdx]
@@ -664,8 +670,8 @@ async def leaderCrash(ids, nodes, tasks, timeout=5):
     await asyncio.sleep(timeout)
     # recover
     logger.info(f'recover {ids[idx]}')
-    await nodes[idx].resume()
-    # await asyncio.gather(leaderCrash(ids, nodes, tasks, timeout), nodes[idx].resume())
+    # await nodes[idx].resume()
+    await asyncio.gather(leaderCrash(ids, nodes, tasks, timeout), nodes[idx].resume())
     
 
     
