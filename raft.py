@@ -90,15 +90,16 @@ class RaftRPC(RaftServicer):
             # add logs
             for entry in request.entries:
                 # write log
-                log_entry = LogEntry(
-                    term=self.node.term,
-                    logIndex=len(self.node.logs),
-                    command = entry
-                    )
-                self.node.appendLog([log_entry])
+                # FIXME: ERROR in older log replication
+                # log_entry = LogEntry(
+                #     term=self.node.term,
+                #     logIndex=len(self.node.logs),
+                #     command = entry
+                #     )
+                self.node.appendLog([entry])
 
                 # apply
-                self.node.data[entry.key] = entry.value2
+                self.node.data[entry.command.key] = entry.command.value2
 
             if request.leaderCommit > self.node.commitIndex:
                 self.node.commitIndex = min(request.leaderCommit, len(self.node.logs)-1)
@@ -132,9 +133,28 @@ class RaftPersistentStateMachine:
 
     def getLastLogTerm(self):
         return self.logs[-1].term
+    
+    def getPrevLogIdx(self, cur_idx):
+        if cur_idx > 0:
+            return self.logs[cur_idx-1].logIndex
+        else:
+            return 0
+
+    def getPrevLogTerm(self, cur_idx):
+        if cur_idx > 0:
+            return self.logs[cur_idx - 1].term
+        else:
+            return 0
 
     def appendLog(self, entries: List[LogEntry]):
-        self.logs.extend(entries)
+        for le in entries:
+            if le.logIndex < len(self.logs):
+                # FIXME: undo the op in the thrown logs
+                # fix wrong log
+                self.logs = self.logs[:le.logIndex] + [le]
+            else:
+                self.logs.append(le)
+        # self.logs.extend(entries)
     
     def getTerm(self):
         return self._term
@@ -165,8 +185,10 @@ class RaftPersistentStateMachine:
             self._votedFor = votedFor
     
     def checkLogMatch(self, req: AppendEntriesRequest):
-        return req.prevLogIndex == self.getLastLogIdx()\
-            and req.prevLogTerm == self.getLastLogTerm()
+        if req.prevLogIndex <= self.getLastLogIdx():
+            return req.prevLogTerm == self.logs[req.prevLogIndex].term
+        else:
+            return False
 
     def reloadPersistentStates(self):
         if not os.path.exists(self.log_path):
@@ -362,7 +384,7 @@ class RaftNode(RaftPersistentStateMachine):
     
     async def sendHeartbeat(self):
         await self.sendRandomMsg(False)
-        
+
     
     async def leaderAliveTimer(self, timeout):
         await asyncio.sleep(timeout)
@@ -480,7 +502,7 @@ class RaftNode(RaftPersistentStateMachine):
                 ))
             await asyncio.wait(tasks)
         else:
-            tasks = []
+            # tasks = []
             entry = Entry(
                 clientId='test',
                 commandId=5,
@@ -489,33 +511,119 @@ class RaftNode(RaftPersistentStateMachine):
                 value1=str(random.randint(1, 100)),
                 value2=str(random.randint(1,100)),
             )
-            log_entry = LogEntry(
-                    term = self.term,
-                    logIndex = self.getLastLogIdx()+1,
-                    command = entry
-                )
-            req = AppendEntriesRequest(
-                    term = self.term,
-                    leaderId = self.leaderId,
-                    prevLogIndex = self.getLastLogIdx(),
-                    prevLogTerm = self.getLastLogTerm(),
-                    leaderCommit = self.commitIndex,
-                    entries = (
-                        entry,
-                    )
-                )
-            self.appendLog((log_entry, ))
+            await self.appendEntry(entry)
+            # log_entry = LogEntry(
+            #         term = self.term,
+            #         logIndex = self.getLastLogIdx()+1,
+            #         command = entry
+            #     )
+            # # req = AppendEntriesRequest(
+            # #         term = self.term,
+            # #         leaderId = self.leaderId,
+            # #         prevLogIndex = self.getLastLogIdx(),
+            # #         prevLogTerm = self.getLastLogTerm(),
+            # #         leaderCommit = self.commitIndex,
+            # #         entries = (
+            # #             entry,
+            # #         )
+            # #     )
+            # self.appendLog((log_entry, ))
 
-            self.data[entry.key] = entry.value2
-            self.logger.debug(f'Current data: {self.data}')
-            for channel in self.channels:
-                stub = RaftStub(channel)
-                tasks.append(stub.AppendEntries(
-                    req,
-                    timeout=1.5
-                ))
+            # self.data[entry.key] = entry.value2
+            # self.logger.debug(f'Current data: {self.data}')
+            # for i in range(len(self.peerIds)):
+            #     tasks.append(
+            #         self.replicateLog(i)
+            #     )
+                # stub = RaftStub(channel)
+                # tasks.append(stub.AppendEntries(
+                #     req,
+                #     timeout=1.5
+                # ))
             
-            await asyncio.wait(tasks)
+            # await asyncio.wait(tasks)
+
+    async def appendEntry(self, entry: Entry):
+        log_entry = LogEntry(
+                term = self.term,
+                logIndex = self.getLastLogIdx()+1,
+                command = entry
+            )
+        tasks = []
+        self.appendLog((log_entry, ))
+
+        self.data[entry.key] = entry.value2
+        self.logger.debug(f'Current data: {self.data}')
+        for i in range(len(self.peerIds)):
+            self.logger.debug(f'Start copying {self.nextIndex[i]} at Peer {i}')
+            tasks.append(
+                asyncio.create_task(self.replicateLog(i))
+            )
+            
+        resp_count = 0
+        majority = len(self.peerIds) // 2
+        while resp_count < majority:
+            fin, pend = await asyncio.wait(tasks, timeout=2)
+            for task in fin:
+                if task.result():
+                    resp_count += 1
+            self.logger.debug(f'Got {resp_count} response currently')
+        self.commitIndex += 1
+        self.logger.debug(f'Got {resp_count} response, entry committed')
+            # stub = RaftStub(channel)
+            # tasks.append(stub.AppendEntries(
+            #     req,
+            #     timeout=1.5
+            # ))
+        
+        # await asyncio.wait(tasks)
+    
+    async def replicateLog(self, peerIdx):
+        channel = self.channels[peerIdx]
+        stub = RaftStub(channel)
+        sendLogIdx = self.nextIndex[peerIdx]
+        req = AppendEntriesRequest(
+                term = self.term,
+                leaderId = self.leaderId,
+                prevLogIndex = self.getPrevLogIdx(sendLogIdx),
+                prevLogTerm = self.getPrevLogTerm(sendLogIdx),
+                leaderCommit = self.commitIndex,
+                entries = (
+                    (self.logs[sendLogIdx],)
+                )
+            )
+        while 1:
+            try:
+                self.logger.debug(f'Copying {sendLogIdx} at Peer {peerIdx}')
+                resp = await stub.AppendEntries(req, timeout=2)
+            except Exception as e:
+                self.logger.debug(f'Copying at Peer {peerIdx} timeout')
+                self.logger.debug(e)
+            else:
+                if not resp.success:
+                    self.logger.debug(f'Copying at Peer {peerIdx} rejected, go back')
+                    self.nextIndex[peerIdx] = max(self.nextIndex[peerIdx]-1, 1)
+                    
+                else:
+                    self.logger.debug(f'Copying at Peer {peerIdx} accepted')
+                    self.matchIndex[peerIdx] = sendLogIdx
+                    self.nextIndex[peerIdx] = sendLogIdx + 1
+                    if self.nextIndex[peerIdx] >=  self.getLastLogIdx():
+                        self.logger.debug(f'Peer {peerIdx} all up to dated')
+                        return True
+                sendLogIdx = self.nextIndex[peerIdx]
+                req = AppendEntriesRequest(
+                        term = self.term,
+                        leaderId = self.leaderId,
+                        prevLogIndex = self.getPrevLogIdx(sendLogIdx),
+                        prevLogTerm = self.getPrevLogTerm(sendLogIdx),
+                        leaderCommit = self.commitIndex,
+                        entries = (
+                            (self.logs[sendLogIdx],)
+                        )
+                    )
+                        
+                
 
 async def randomCrash(ids, nodes, tasks, timeout=5):
     await asyncio.sleep(timeout)
@@ -556,7 +664,8 @@ async def leaderCrash(ids, nodes, tasks, timeout=5):
     await asyncio.sleep(timeout)
     # recover
     logger.info(f'recover {ids[idx]}')
-    await asyncio.gather(leaderCrash(ids, nodes, tasks, timeout), nodes[idx].resume())
+    await nodes[idx].resume()
+    # await asyncio.gather(leaderCrash(ids, nodes, tasks, timeout), nodes[idx].resume())
     
 
     
@@ -571,8 +680,8 @@ async def main():
     logger.addHandler(h)
     logger.setLevel(logging.INFO)
 
-    ids = ['localhost:9000', 'localhost:9002', 'localhost:9004', 'localhost:9006', 'localhost:9008']
-    # ids = ['localhost:9000', 'localhost:9002', 'localhost:9004']
+    # ids = ['localhost:9000', 'localhost:9002', 'localhost:9004', 'localhost:9006', 'localhost:9008']
+    ids = ['localhost:9000', 'localhost:9002', 'localhost:9004']
     nodes = []
     tasks = []
     for nodeId in ids:

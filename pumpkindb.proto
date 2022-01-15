@@ -77,7 +77,7 @@ message AppendEntriesRequest {
     uint64 prevLogIndex = 3;
     uint32 prevLogTerm = 4;
     uint64 leaderCommit = 5;
-    repeated Entry entries = 6;
+    repeated LogEntry entries = 6;
 }
 
 message AppendEntriesResponse {
