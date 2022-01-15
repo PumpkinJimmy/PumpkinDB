@@ -1,22 +1,17 @@
 import asyncio
 import platform
 import random
-import pickle
-import struct 
-import os
 import string
 from concurrent.futures import ThreadPoolExecutor
 from pprint import pprint
 import logging
 from typing import List
-import copy
-import json
 
 import grpc
-from google.protobuf import json_format
+from raft_sm import RaftPersistentStateMachine
+from raft_rpc import RaftRPC
 
 from pumpkindb_pb2_grpc import (
-    RaftServicer,
     RaftStub,
     MonitorStub,
     add_RaftServicer_to_server
@@ -35,194 +30,8 @@ async def setInterval(coro_func, timeout):
 def random_timeout(T):
     return random.random()*T + T
 
-class RaftRPC(RaftServicer):
-    def __init__(self, node):
-        self.node = node
-        self.logger = self.node.logger
-
-    async def RequestVote(self, request, context):
-        self.logger.debug(f'Get RequestVote from {request.candidateId}')
-
-        if request.term >= self.node.term \
-            and (self.node.votedFor is None or self.node.votedFor == request.candidateId) \
-            and (request.lastLogTerm >= self.node.logs[-1].term
-                and request.lastLogIndex >= self.node.logs[-1].logIndex):
-            self.node.votedFor = request.candidateId
-            self.logger.debug(f'Vote grant {request.candidateId}')
-            # if self.node.leader_alive_task:
-            #     self.node.leader_alive_task.cancel()
-            #     self.node.leader_alive_task = None
-                
-            return RequestVoteResponse(
-                term=self.node.term,
-                voteGranted=True
-            )
-            
-        else:
-            self.logger.debug(f'Reject vote request from {request.candidateId}')
-            return RequestVoteResponse(
-                term=self.node.term,
-                voteGranted=False
-            )
     
-    async def AppendEntries(self, request, context):
-        self.node.leader_alive = True
-        self.logger.debug(f'Entries: {request.entries}')
-
-        if request.term >= self.node.term \
-            and self.node.checkLogMatch(request):
-            if self.node.election_timer_task is not None:
-                # switch to follower
-                self.logger.info(f'Become follower: heartbeat from {request.leaderId}')
-                self.node.election_timer_task.cancel()
-                self.node.election_timer_task = None
-            
-            self.logger.debug(f'Heartbeat from {request.leaderId}')
-            self.node.term = request.term
-            self.node.leaderId = request.leaderId
-            self.node.votedFor = None
-
-            # reset leader alive timer
-            if self.node.leader_alive_task is None:
-                self.logger.debug('Reset leader alive timer')
-                self.node.leader_alive_task = asyncio.create_task(
-                    self.node.leaderAliveTimer(random_timeout(2))
-                )
-            
-            # add logs
-            for entry in request.entries:
-                # write log
-                self.node.appendLog([entry])
-
-                # apply
-                if self.node.apply_task is None:
-                    self.node.apply_task = asyncio.create_task(
-                        self.node.applyEntriesCoro()
-                    )
-                # self.node.data[entry.command.key] = entry.command.value2
-
-            if request.leaderCommit > self.node.commitIndex:
-                self.node.commitIndex = min(request.leaderCommit, self.node.getLastLogIdx())
-            self.logger.debug(f'Current data table: {self.node.data}')
-            return AppendEntriesResponse(
-                term=self.node.term,
-                success=True
-            )
-        # Reject msg from old term
-        else:
-            self.logger.debug(f'Reject append index: {request.term}, {self.node.term}, {request.prevLogIndex}, {self.node.getLastLogIdx()}, {request.prevLogTerm}, {self.node.getLastLogTerm()}')
-            return AppendEntriesResponse(
-                term=self.node.term,
-                success=False
-            )
-
         
-
-class RaftPersistentStateMachine:
-    # log index start from 1 (not 0)
-    def __init__(self, log_path):
-        self.log_path = log_path
-        self._term = 0
-        self._votedFor = None
-        self.logs = []
-        self.reloadPersistentStates()
-        
-
-    def getLastLogIdx(self):
-        return self.logs[-1].logIndex
-
-    def getLastLogTerm(self):
-        return self.logs[-1].term
-    
-    def getPrevLogIdx(self, cur_idx):
-        if cur_idx > 0:
-            return self.logs[cur_idx-1].logIndex
-        else:
-            return 0
-
-    def getPrevLogTerm(self, cur_idx):
-        if cur_idx > 0:
-            return self.logs[cur_idx - 1].term
-        else:
-            return 0
-
-    def appendLog(self, entries: List[LogEntry]):
-        # self.log_file.seek(-1, 2)
-        for le in entries:
-            if le.logIndex <= self.getLastLogIdx():
-                if le.term != self.logs[le.logIndex]:
-                    self.logs = self.logs[0:le.logIndex]
-                    self.log_file.seek(0)
-                    for old_le in self.logs[1:]:
-                        line = json.dumps(json_format.MessageToDict(old_le))
-                        self.log_file.write(line)
-                        self.log_file.write('\n')
-            line = json.dumps(json_format.MessageToDict(le))
-            self.log_file.write(line)
-            self.log_file.write('\n')
-            self.log_file.flush()
-            self.logs.append(le)
-            
-        # sign for end
-        # self.log_file.write('\n')
-        # self.log_file.flush()
-
-
-    
-    def getTerm(self):
-        return self._term
-    
-    def setTerm(self, term):
-        self._term = term
-
-    def getVotedFor(self):
-        return self._votedFor
-
-    def setVotedFor(self, votedFor):
-        self._votedFor = votedFor
-    
-    def checkLogMatch(self, req: AppendEntriesRequest):
-        if req.prevLogIndex <= self.getLastLogIdx():
-            return req.prevLogTerm == self.logs[req.prevLogIndex].term
-        else:
-            return False
-
-    def reloadPersistentStates(self):
-        if not os.path.exists(self.log_path):
-            self.log_file = open(self.log_path, 'w+')
-            self.state_file = open(self.log_path + '.state', 'w+')
-            self.setTerm(0)
-            self.setVotedFor(None)
-            self.logs = [LogEntry(
-                    term=0,
-                    logIndex=0
-                )]
-        else:
-            self.log_file = open(self.log_path, 'r+')
-            self.state_file = open(self.log_path, 'r+')
-            self.readTerm()
-            self.readVoteFor()
-            self.readLogs()
-    
-    def readTerm(self):
-        self._term = 0
-
-    def readVoteFor(self):
-        self._votedFor = None
-
-    def readLogs(self):
-        logs = [LogEntry(term=0, logIndex=0)]
-        self.log_file.seek(0)
-        line = self.log_file.readline().strip()
-        while line:
-            e = LogEntry()
-            json_format.Parse(line.encode(), e)
-            logs.append(e)
-            line = self.log_file.readline().strip()
-        self.logs = logs
-    
-    votedFor = property(getVotedFor, setVotedFor)
-    term = property(getTerm, setTerm)
 
 class RaftNode(RaftPersistentStateMachine):
     
@@ -519,36 +328,6 @@ class RaftNode(RaftPersistentStateMachine):
                 value2=str(random.randint(1,100)),
             )
             await self.appendEntry(entry)
-            # log_entry = LogEntry(
-            #         term = self.term,
-            #         logIndex = self.getLastLogIdx()+1,
-            #         command = entry
-            #     )
-            # # req = AppendEntriesRequest(
-            # #         term = self.term,
-            # #         leaderId = self.leaderId,
-            # #         prevLogIndex = self.getLastLogIdx(),
-            # #         prevLogTerm = self.getLastLogTerm(),
-            # #         leaderCommit = self.commitIndex,
-            # #         entries = (
-            # #             entry,
-            # #         )
-            # #     )
-            # self.appendLog((log_entry, ))
-
-            # self.data[entry.key] = entry.value2
-            # self.logger.debug(f'Current data: {self.data}')
-            # for i in range(len(self.peerIds)):
-            #     tasks.append(
-            #         self.replicateLog(i)
-            #     )
-                # stub = RaftStub(channel)
-                # tasks.append(stub.AppendEntries(
-                #     req,
-                #     timeout=1.5
-                # ))
-            
-            # await asyncio.wait(tasks)
 
     async def appendEntry(self, entry: Entry):
         log_entry = LogEntry(
@@ -564,7 +343,6 @@ class RaftNode(RaftPersistentStateMachine):
             self.apply_task = asyncio.create_task(
                 self.applyEntriesCoro()
             )
-        # self.data[entry.key] = entry.value2
 
         self.logger.debug(f'Current data: {self.data}')
         for i in range(len(self.peerIds)):
