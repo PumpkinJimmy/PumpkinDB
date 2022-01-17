@@ -27,7 +27,8 @@ def parseToken(line, p):
         return line[p:p2], p2
 
 def startClient():
-    channel = grpc.insecure_channel('localhost:50051')
+    server_addr = 'localhost:50051'
+    channel = grpc.insecure_channel(server_addr)
     stub = PumpkinDBStub(channel)
     clientId = str(uuid.uuid4())
     commandId = 0
@@ -67,7 +68,7 @@ def startClient():
                 commandId=commandId,
                 key=key,
                 value=value))
-            print(f'{key}: {resp.value}')
+            print(f'Receipt:({resp.term}, {resp.logIndex})')
         elif op.lower() == 'del':
             print(HTML('<ansiyellow>Not implement yet</ansiyellow>'))
         else:

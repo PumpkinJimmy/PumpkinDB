@@ -37,7 +37,6 @@ class RaftPersistentStateMachine:
             return 0
 
     def appendLog(self, entries: List[LogEntry]):
-        # self.log_file.seek(-1, 2)
         for le in entries:
             if le.logIndex <= self.getLastLogIdx():
                 if le.term != self.logs[le.logIndex]:
@@ -47,15 +46,13 @@ class RaftPersistentStateMachine:
                         line = json.dumps(json_format.MessageToDict(old_le))
                         self.log_file.write(line)
                         self.log_file.write('\n')
+                    # throw the message left
+                    self.log_file.truncate()
             line = json.dumps(json_format.MessageToDict(le))
             self.log_file.write(line)
             self.log_file.write('\n')
             self.log_file.flush()
             self.logs.append(le)
-            
-        # sign for end
-        # self.log_file.write('\n')
-        # self.log_file.flush()
 
 
     

@@ -31,6 +31,8 @@ message GetRequest{
 
 message ValueResponse {
     string value = 1;
+    uint32 term = 2;
+    uint64 logIndex = 3;
 }
 
 message PutRequest {

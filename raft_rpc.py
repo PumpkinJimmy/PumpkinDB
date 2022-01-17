@@ -70,15 +70,13 @@ class RaftRPC(RaftServicer):
                 # write log
                 self.node.appendLog([entry])
 
-                # apply
-                if self.node.apply_task is None:
-                    self.node.apply_task = asyncio.create_task(
-                        self.node.applyEntriesCoro()
-                    )
-                # self.node.data[entry.command.key] = entry.command.value2
-
             if request.leaderCommit > self.node.commitIndex:
                 self.node.commitIndex = min(request.leaderCommit, self.node.getLastLogIdx())
+            # apply
+            if self.node.apply_task is None:
+                self.node.apply_task = asyncio.create_task(
+                    self.node.applyEntriesCoro()
+                )
             self.logger.debug(f'Current data table: {self.node.data}')
             return AppendEntriesResponse(
                 term=self.node.term,

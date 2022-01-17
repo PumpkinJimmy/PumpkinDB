@@ -14,9 +14,11 @@ from raft_rpc import RaftRPC
 from pumpkindb_pb2_grpc import (
     RaftStub,
     MonitorStub,
+    add_PumpkinDBServicer_to_server,
     add_RaftServicer_to_server
 )
 from pumpkindb_pb2 import *
+from db_rpc import PumpkinDBRPC
 
 async def setTimer(coro_func, timeout):
     await asyncio.sleep(timeout)
@@ -67,7 +69,8 @@ class RaftNode(RaftPersistentStateMachine):
         h.setFormatter(f)
         h.setLevel(logging.DEBUG)
         self.logger.addHandler(h)
-        self.logger.setLevel(logging.DEBUG)
+        # self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.INFO)
     
     def initDB(self):
         self.data = {}
@@ -98,6 +101,14 @@ class RaftNode(RaftPersistentStateMachine):
     
     def initRPCClient(self):
         self.channels = list(map(self.getChannel, self.peerIds))
+    
+    def initDBServer(self):
+        self.db_server = grpc.aio.server(
+            ThreadPoolExecutor(max_workers=40),
+            maximum_concurrent_rpcs=40
+        )
+        add_PumpkinDBServicer_to_server(PumpkinDBRPC(self), self.db_server)
+        self.db_server.add_insecure_port('localhost:50051')
     
     def resetTimers(self):
         tmp = getattr(self, 'election_timer_task', None)
@@ -157,6 +168,11 @@ class RaftNode(RaftPersistentStateMachine):
         ))
 
         await self.sendMonitor()
+
+    async def startDBServer(self):
+        self.logger.info("DB Server Start")
+        await self.db_server.start()
+        await self.db_server.wait_for_termination()
     
     async def _run(self):
         await self.raft_server.start()
@@ -185,28 +201,30 @@ class RaftNode(RaftPersistentStateMachine):
 
     
     async def leaderAliveTimer(self, timeout):
-        await asyncio.sleep(timeout)
-        if self.leader_alive:
-            self.logger.debug('Leader alive')
-            self.leader_alive = False
-            await self.leaderAliveTimer(timeout)
-        elif self.votedFor:
-            print(self.votedFor)
-            self.logger.debug("Vote granted, cancel leader alive timer")
-            self.leader_alive_task.cancel()
-            self.leader_alive_task = None
-            return
-        else:
-            self.logger.info("Become candidate: cannot receive heartbeat")
-            T = 2
-            self.election_timer_task = asyncio.create_task(self.electionTimer(random_timeout(T)))
-            self.leader_alive_task = None
+        while 1:
+            await asyncio.sleep(timeout)
+            if self.leader_alive:
+                self.logger.debug('Leader alive')
+                self.leader_alive = False
+            # if self.votedFor:
+            #     print(self.votedFor)
+            #     self.logger.debug("Vote granted, cancel leader alive timer")
+            #     # self.leader_alive_task.cancel()
+            #     self.leader_alive_task = None
+            #     return
+            elif not self.votedFor:
+                self.logger.info("Become candidate: cannot receive heartbeat")
+                T = 2
+                self.election_timer_task = asyncio.create_task(self.electionTimer(random_timeout(T)))
+                self.leader_alive_task = None
+                return
     
     async def heartbeatTimer(self, timeout):
-        await asyncio.sleep(timeout)
-        await self.sendRandomMsg()
-        self.logger.debug('Send heartbeat')
-        await self.heartbeatTimer(timeout)
+        while 1:
+            await asyncio.sleep(timeout)
+            await self.sendRandomMsg(False)
+            self.logger.debug('Send heartbeat')
+            # await self.heartbeatTimer(timeout)
     
     async def electionTimer(self, timeout):
         if self.votedFor != None:
@@ -254,6 +272,8 @@ class RaftNode(RaftPersistentStateMachine):
 
         if self.isLeader():
             await self.sendHeartbeat()
+            self.initDBServer()
+            asyncio.create_task(self.startDBServer())
             self.heartbeat_timer_task = asyncio.create_task(self.heartbeatTimer(1))
         
         else:
@@ -285,17 +305,20 @@ class RaftNode(RaftPersistentStateMachine):
         await self._run()
     
     async def applyLog(self, entry: Entry):
-        if entry.operation == 'TEST' or entry.operation == 'SET':
+        if entry.operation == 'TEST' or entry.operation == 'PUT':
             await self.dbSet(entry.key, entry.value2)
 
     async def applyEntriesCoro(self):
+        self.logger.debug(f'Apply coro start, applied {self.lastApplied} commit {self.commitIndex} ')
         while self.lastApplied < self.commitIndex:
+            self.logger.debug(f'Apply log {self.logs[self.lastApplied+1].command}')
             await self.applyLog(self.logs[self.lastApplied+1].command)
             self.lastApplied += 1
         self.apply_task = None
 
 
     async def dbSet(self, key, value):
+        self.logger.debug(f'Set {key} = {value}')
         self.data[key] = value
 
     async def dbGet(self, key):
@@ -338,12 +361,6 @@ class RaftNode(RaftPersistentStateMachine):
         tasks = []
         self.appendLog((log_entry, ))
 
-        # apply
-        if self.apply_task is None:
-            self.apply_task = asyncio.create_task(
-                self.applyEntriesCoro()
-            )
-
         self.logger.debug(f'Current data: {self.data}')
         for i in range(len(self.peerIds)):
             self.logger.debug(f'Start copying {self.nextIndex[i]} at Peer {i}')
@@ -361,6 +378,14 @@ class RaftNode(RaftPersistentStateMachine):
             self.logger.debug(f'Got {resp_count} response currently')
         self.commitIndex += 1
         self.logger.debug(f'Got {resp_count} response, entry committed')
+
+        # apply
+        if self.apply_task is None:
+            self.apply_task = asyncio.create_task(
+                self.applyEntriesCoro()
+            )
+
+        return log_entry.term, log_entry.logIndex
     
     async def replicateLog(self, peerIdx):
         channel = self.channels[peerIdx]
@@ -464,8 +489,8 @@ async def main():
     logger.addHandler(h)
     logger.setLevel(logging.INFO)
 
-    # ids = ['localhost:9000', 'localhost:9002', 'localhost:9004', 'localhost:9006', 'localhost:9008']
-    ids = ['localhost:9000', 'localhost:9002', 'localhost:9004']
+    ids = ['localhost:9000', 'localhost:9002', 'localhost:9004', 'localhost:9006', 'localhost:9008']
+    # ids = ['localhost:9000', 'localhost:9002', 'localhost:9004']
     nodes = []
     tasks = []
     for nodeId in ids:
@@ -474,7 +499,7 @@ async def main():
         nodes.append(RaftNode(nodeId, peers))
         tasks.append(asyncio.create_task(nodes[-1].start()))
 
-    tasks.append(asyncio.create_task(leaderCrash(ids, nodes, tasks, timeout=10)))
+    # tasks.append(asyncio.create_task(leaderCrash(ids, nodes, tasks, timeout=10)))
     await asyncio.wait(tasks)
     
     
