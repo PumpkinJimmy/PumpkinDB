@@ -11,6 +11,16 @@ class PumpkinDBRPC(PumpkinDBServicer):
         self.logger.info(
             f'Request: <[{request.clientId}:{request.commandId}] GET {request.key}>'
             )
+        rTerm, rIdx = request.receiptTerm, request.receiptLogIndex
+        if rTerm and rIdx:
+            self.logger.debug(
+                f'Request receipt: {rTerm, rIdx}'
+            )
+            await self.node.applyUntil(rIdx)
+        self.logger.debug(f'(Handling get) Current node committed:{self.node.commitIndex} applied:{self.node.lastApplied}')
+        self.logger.info(
+            f'Response for <[{request.clientId}:{request.commandId}] GET {request.key}>: {self.node.data.get(request.key, None)}'
+            )
         return ValueResponse(
             value=self.node.data.get(request.key, None)
         )

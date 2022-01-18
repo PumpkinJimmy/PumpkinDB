@@ -27,6 +27,8 @@ message GetRequest{
     string clientId = 1;
     uint64 commandId = 2;
     string key = 3;
+    uint32 receiptTerm = 4;
+    uint64 receiptLogIndex = 5;
 }
 
 message ValueResponse {
@@ -40,6 +42,8 @@ message PutRequest {
     uint64 commandId = 2;
     string key = 3;
     string value = 4;
+    uint32 receiptTerm = 5;
+    uint64 receiptLogIndex = 6;
 }
 
 message RequestVoteRequest{

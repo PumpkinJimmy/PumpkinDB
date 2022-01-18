@@ -67,10 +67,16 @@ class RaftNode(RaftPersistentStateMachine):
         f = logging.Formatter('[%(name)s] %(msg)s')
         h = logging.StreamHandler()
         h.setFormatter(f)
-        h.setLevel(logging.DEBUG)
+        h.setLevel(logging.INFO)
         self.logger.addHandler(h)
-        # self.logger.setLevel(logging.DEBUG)
-        self.logger.setLevel(logging.INFO)
+
+        fh = logging.FileHandler('raft.log')
+        fh.setFormatter(f)
+        fh.setLevel(logging.DEBUG)
+        self.logger.addHandler(fh)
+        
+        self.logger.setLevel(logging.DEBUG)
+        # self.logger.setLevel(logging.INFO)
     
     def initDB(self):
         self.data = {}
@@ -308,13 +314,21 @@ class RaftNode(RaftPersistentStateMachine):
     async def applyLog(self, entry: Entry):
         if entry.operation == 'TEST' or entry.operation == 'PUT':
             await self.dbSet(entry.key, entry.value2)
+    
+    async def applyUntil(self, rIdx):
+        while self.lastApplied < self.getLastLogIdx() \
+            and self.lastApplied < rIdx and self.lastApplied < self.commitIndex:
+            self.logger.debug(f'Applying Idx {self.lastApplied+1} for RAW consistency')
+            await self.applyLog(self.logs[self.lastApplied+1].command)
+            self.lastApplied += 1
 
     async def applyEntriesCoro(self):
         self.logger.debug(f'Apply coro start, applied {self.lastApplied} commit {self.commitIndex} ')
-        while self.lastApplied < self.commitIndex:
+        while self.lastApplied < self.getLastLogIdx() \
+            and self.lastApplied < self.commitIndex:
             self.logger.debug(f'Apply log {self.logs[self.lastApplied+1].command}')
             await self.applyLog(self.logs[self.lastApplied+1].command)
-            # await asyncio.sleep(5)
+            await asyncio.sleep(5)
             self.lastApplied += 1
         self.apply_task = None
 
@@ -378,8 +392,9 @@ class RaftNode(RaftPersistentStateMachine):
                 if task.result():
                     resp_count += 1
             self.logger.debug(f'Got {resp_count} response currently')
-        self.commitIndex += 1
-        self.logger.debug(f'Got {resp_count} response, entry committed')
+        self.logger.debug(f'Got {resp_count} response, entry committed, commitIdx {self.commitIndex}->{log_entry.logIndex}')
+        self.commitIndex += log_entry.logIndex
+        
 
         # apply
         if self.apply_task is None:
@@ -419,7 +434,7 @@ class RaftNode(RaftPersistentStateMachine):
                     self.logger.debug(f'Copying at Peer {peerIdx} accepted')
                     self.matchIndex[peerIdx] = sendLogIdx
                     self.nextIndex[peerIdx] = sendLogIdx + 1
-                    if self.nextIndex[peerIdx] >=  self.getLastLogIdx():
+                    if self.nextIndex[peerIdx] >  self.getLastLogIdx():
                         self.logger.debug(f'Peer {peerIdx} all up to dated')
                         return True
                 sendLogIdx = self.nextIndex[peerIdx]

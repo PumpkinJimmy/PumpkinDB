@@ -1,0 +1,3 @@
+- 现行方法：Leader自动启动一个DBServer。crash时不会释放，因此recover实验会失败
+  - 解决：适当地分配每个Node两个Addr
+- 现在客户端可以得到一个Recipt，可以用于搞读写一致性：保存每个Key最近的一个Recipt，然后请求时带上Recipt，服务器直接检查Recipt被Apply了没有，没有就赶紧跟上

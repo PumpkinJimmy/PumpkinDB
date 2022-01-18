@@ -9,6 +9,7 @@ from pumpkindb_pb2 import GreetRequest
 import pumpkindb_pb2
 from prompt_toolkit import prompt, PromptSession, HTML
 from prompt_toolkit import print_formatted_text as print
+from db_client import DBClient
 
 def parseToken(line, p):
     while p < len(line) and line[p] in string.whitespace:
@@ -29,10 +30,11 @@ def parseToken(line, p):
 def startClient():
     server_addr = 'localhost:50051'
     channel = grpc.insecure_channel(server_addr)
-    stub = PumpkinDBStub(channel)
-    clientId = str(uuid.uuid4())
-    commandId = 0
+    # stub = PumpkinDBStub(channel)
+    # clientId = str(uuid.uuid4())
+    # commandId = 0
     session = PromptSession(HTML('<ansiblue>PumpkinDB=> </ansiblue>'))
+    client = DBClient()
     while 1:
         line = session.prompt()
         idx = line.find(' ')
@@ -48,41 +50,45 @@ def startClient():
                 print(key, endpos)
                 print(HTML('<ansired>Unknown usage</ansired>'))
                 continue
-            commandId += 1
-            while 1:
-                try:
-                    resp = stub.Get(pumpkindb_pb2.GetRequest(
-                        clientId=clientId,
-                        commandId=commandId,
-                        key=key,
-                    ))
-                except Exception as e:
-                    print(e)
-                    print(f"Retry <GET {key}>")
-                else:
-                    print(f'{key}: {resp.value}')
-                    break
+            value = client.get(key)
+            print(f'{key}: {value}')
+            # commandId += 1
+            # while 1:
+            #     try:
+            #         resp = stub.Get(pumpkindb_pb2.GetRequest(
+            #             clientId=clientId,
+            #             commandId=commandId,
+            #             key=key,
+            #         ))
+            #     except Exception as e:
+            #         print(e)
+            #         print(f"Retry <GET {key}>")
+            #     else:
+            #         print(f'{key}: {resp.value}')
+            #         break
         elif op.lower() == 'put':
-            commandId += 1
+            # commandId += 1
             key, idx = parseToken(line, idx)
             value, idx = parseToken(line, idx)
             endpos, _ = parseToken(line, idx)
             if key is None or value is None or endpos is not None:
                 print(HTML('<ansired>Unknown usage</ansired>'))
                 continue
-            while 1:
-                try:
-                    resp = stub.Put(pumpkindb_pb2.PutRequest(
-                        clientId=clientId,
-                        commandId=commandId,
-                        key=key,
-                        value=value))
-                except Exception as e:
-                    print(e)
-                    print(f"Retry <PUT {key}<-{value}>")
-                else:
-                    print(f'Receipt:({resp.term}, {resp.logIndex})')
-                    break
+            receipt = client.put(key, value)
+            print(f"Receipt: {receipt}")
+            # while 1:
+            #     try:
+            #         resp = stub.Put(pumpkindb_pb2.PutRequest(
+            #             clientId=clientId,
+            #             commandId=commandId,
+            #             key=key,
+            #             value=value))
+            #     except Exception as e:
+            #         print(e)
+            #         print(f"Retry <PUT {key}<-{value}>")
+            #     else:
+            #         print(f'Receipt:({resp.term}, {resp.logIndex})')
+            #         break
         elif op.lower() == 'del':
             print(HTML('<ansiyellow>Not implement yet</ansiyellow>'))
         else:

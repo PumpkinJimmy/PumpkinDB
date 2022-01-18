@@ -84,7 +84,10 @@ class RaftRPC(RaftServicer):
             )
         # Reject msg from old term
         else:
-            self.logger.debug(f'Reject append index: {request.term}, {self.node.term}, {request.prevLogIndex}, {self.node.getLastLogIdx()}, {request.prevLogTerm}, {self.node.getLastLogTerm()}')
+            self.logger.debug(f'''Reject append index: 
+            Request term: {request.term}, Node term: {self.node.term}, 
+            Request prevLogIndex: {request.prevLogIndex}, Node lastLogIndex: {self.node.getLastLogIdx()}, 
+            Request prevLogTerm: {request.prevLogTerm}, Node lastLogTerm: {self.node.getLastLogTerm()}''')
             return AppendEntriesResponse(
                 term=self.node.term,
                 success=False
