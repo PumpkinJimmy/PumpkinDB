@@ -49,12 +49,19 @@ def startClient():
                 print(HTML('<ansired>Unknown usage</ansired>'))
                 continue
             commandId += 1
-            resp = stub.Get(pumpkindb_pb2.GetRequest(
-                clientId=clientId,
-                commandId=commandId,
-                key=key,
-            ))
-            print(f'{key}: {resp.value}')
+            while 1:
+                try:
+                    resp = stub.Get(pumpkindb_pb2.GetRequest(
+                        clientId=clientId,
+                        commandId=commandId,
+                        key=key,
+                    ))
+                except Exception as e:
+                    print(e)
+                    print(f"Retry <GET {key}>")
+                else:
+                    print(f'{key}: {resp.value}')
+                    break
         elif op.lower() == 'put':
             commandId += 1
             key, idx = parseToken(line, idx)
@@ -63,12 +70,19 @@ def startClient():
             if key is None or value is None or endpos is not None:
                 print(HTML('<ansired>Unknown usage</ansired>'))
                 continue
-            resp = stub.Put(pumpkindb_pb2.PutRequest(
-                clientId=clientId,
-                commandId=commandId,
-                key=key,
-                value=value))
-            print(f'Receipt:({resp.term}, {resp.logIndex})')
+            while 1:
+                try:
+                    resp = stub.Put(pumpkindb_pb2.PutRequest(
+                        clientId=clientId,
+                        commandId=commandId,
+                        key=key,
+                        value=value))
+                except Exception as e:
+                    print(e)
+                    print(f"Retry <PUT {key}<-{value}>")
+                else:
+                    print(f'Receipt:({resp.term}, {resp.logIndex})')
+                    break
         elif op.lower() == 'del':
             print(HTML('<ansiyellow>Not implement yet</ansiyellow>'))
         else:

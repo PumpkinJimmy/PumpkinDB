@@ -109,6 +109,7 @@ class RaftNode(RaftPersistentStateMachine):
         )
         add_PumpkinDBServicer_to_server(PumpkinDBRPC(self), self.db_server)
         self.db_server.add_insecure_port('localhost:50051')
+        self.db_server_task = None
     
     def resetTimers(self):
         tmp = getattr(self, 'election_timer_task', None)
@@ -172,7 +173,6 @@ class RaftNode(RaftPersistentStateMachine):
     async def startDBServer(self):
         self.logger.info("DB Server Start")
         await self.db_server.start()
-        await self.db_server.wait_for_termination()
     
     async def _run(self):
         await self.raft_server.start()
@@ -288,6 +288,7 @@ class RaftNode(RaftPersistentStateMachine):
         self.resetTimers()
         self.running_state = 'stopped'
 
+        await self.db_server.stop(None)
         await self.raft_server.stop(None)
         for channel in self.channels:
             await channel.close()
@@ -313,6 +314,7 @@ class RaftNode(RaftPersistentStateMachine):
         while self.lastApplied < self.commitIndex:
             self.logger.debug(f'Apply log {self.logs[self.lastApplied+1].command}')
             await self.applyLog(self.logs[self.lastApplied+1].command)
+            # await asyncio.sleep(5)
             self.lastApplied += 1
         self.apply_task = None
 
@@ -499,7 +501,7 @@ async def main():
         nodes.append(RaftNode(nodeId, peers))
         tasks.append(asyncio.create_task(nodes[-1].start()))
 
-    # tasks.append(asyncio.create_task(leaderCrash(ids, nodes, tasks, timeout=10)))
+    tasks.append(asyncio.create_task(leaderCrash(ids, nodes, tasks, timeout=10)))
     await asyncio.wait(tasks)
     
     
